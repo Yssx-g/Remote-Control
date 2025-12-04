@@ -97,6 +97,12 @@ WINDOWS_SHELL_COMMANDS = [
     
     # 文件属性
     'attrib',    # 显示/修改文件属性
+    
+    # 进程管理
+    'tasklist',  # 显示进程列表
+    'taskkill',  # 终止进程
+    'start',     # 启动程序
+    'wmic',      # WMI命令行工具(进程查询)
 ]
 
 # Linux/Mac Shell 命令白名单（适用于Linux/Mac系统）
@@ -140,6 +146,21 @@ LINUX_SHELL_COMMANDS = [
     'chown',     # 修改所有者
     'stat',      # 显示文件状态
     'file',      # 识别文件类型
+    
+    # 进程管理
+    'ps',        # 显示进程列表
+    'top',       # 实时进程监控
+    'htop',      # 增强版进程监控
+    'kill',      # 终止进程
+    'killall',   # 按名称终止进程
+    'pkill',     # 按模式终止进程
+    'pgrep',     # 按模式查找进程
+    'pidof',     # 查找进程PID
+    'pstree',    # 显示进程树
+    'jobs',      # 显示后台任务
+    'bg',        #后台运行任务
+    'fg',        # 前台运行任务
+    'nohup',     # 不挂断运行命令
 ]
 
 # 自动检测当前系统并选择对应的命令列表
@@ -171,7 +192,10 @@ SHELL_HISTORY_SIZE = 100
 
 # ==================== 网络配置 ====================
 # 连接超时时间（秒）
-CONNECTION_TIMEOUT = 30
+CONNECTION_TIMEOUT = 60
+
+# 视频流启动超时（秒）- 摄像头初始化可能需要较长时间
+VIDEO_START_TIMEOUT = 60
 
 # 心跳检测间隔（秒）
 HEARTBEAT_INTERVAL = 60

