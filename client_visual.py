@@ -1,6 +1,6 @@
 """
-远程控制客户端 - 可视化增强版
-集成实时监控、进程管理、文件浏览等可视化功能
+远程控制客户端 - 可视化增强版（修复版）
+修复了协议混乱、socket竞争等问题
 """
 
 import tkinter as tk
@@ -29,7 +29,11 @@ class VisualClientUI(tk.Tk):
         self.is_connected = False
         self.stream_window = None
         self.monitor_running = False
+        self.streaming = False
         self.system_data = {}
+
+        # 添加socket锁，防止多线程竞争
+        self.sock_lock = threading.Lock()
 
         self._init_login_ui()
 
@@ -83,8 +87,6 @@ class VisualClientUI(tk.Tk):
 
         # 创建各个功能标签页
         self._create_dashboard_tab()      # 仪表盘（系统监控）
-        self._create_process_tab()        # 进程管理
-        self._create_files_tab()          # 文件浏览器
         self._create_screen_tab()         # 屏幕监控
         self._create_shell_tab()          # Shell终端
         self._create_history_tab()        # 操作历史
@@ -239,120 +241,7 @@ class VisualClientUI(tk.Tk):
         canvas.bar = bar
         return canvas
 
-    # ==================== 标签页2: 进程管理器 ====================
-
-    def _create_process_tab(self):
-        """创建进程管理器"""
-        tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
-        self.notebook.add(tab, text="⚙️ PROCESSES")
-
-        # 顶部控制栏
-        control_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
-        control_frame.pack(fill='x', padx=10, pady=10)
-
-        tk.Button(control_frame, text="🔄 REFRESH", command=self.refresh_processes,
-                 bg=COLORS['btn_bg'], fg=COLORS['fg_primary'], font=FONTS['body'],
-                 relief='flat').pack(side='left', padx=5)
-
-        tk.Button(control_frame, text="🛑 KILL PROCESS", command=self.kill_process,
-                 bg=COLORS['fg_danger'], fg='white', font=FONTS['body'],
-                 relief='flat').pack(side='left', padx=5)
-
-        tk.Label(control_frame, text="Filter:", bg=COLORS['bg_lighter'],
-                fg='white', font=FONTS['body']).pack(side='left', padx=10)
-        self.process_filter = tk.Entry(control_frame, font=FONTS['mono'], bg='#333',
-                                      fg='white', insertbackground='white', width=20)
-        self.process_filter.pack(side='left')
-        self.process_filter.bind('<KeyRelease>', lambda e: self.filter_processes())
-
-        # 进程列表（使用Treeview）
-        list_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
-        list_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # 创建Treeview
-        columns = ('PID', 'Name', 'CPU%', 'Memory%', 'Status')
-        self.process_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=20)
-
-        # 定义列
-        for col in columns:
-            self.process_tree.heading(col, text=col, command=lambda c=col: self.sort_processes(c))
-            self.process_tree.column(col, width=120 if col != 'Name' else 300)
-
-        # 滚动条
-        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.process_tree.yview)
-        self.process_tree.configure(yscrollcommand=scrollbar.set)
-
-        self.process_tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-
-        # 样式
-        style = ttk.Style()
-        style.configure("Treeview", background=COLORS['bg_lighter'],
-                       foreground=COLORS['fg_white'], fieldbackground=COLORS['bg_lighter'],
-                       font=FONTS['small'])
-        style.configure("Treeview.Heading", background=COLORS['btn_bg'],
-                       foreground=COLORS['fg_primary'], font=FONTS['body'])
-
-    # ==================== 标签页3: 文件浏览器 ====================
-
-    def _create_files_tab(self):
-        """创建文件浏览器"""
-        tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
-        self.notebook.add(tab, text="📁 FILES")
-
-        # 顶部路径和控制栏
-        top_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
-        top_frame.pack(fill='x', padx=10, pady=10)
-
-        tk.Label(top_frame, text="Path:", bg=COLORS['bg_lighter'],
-                fg='white', font=FONTS['body']).pack(side='left', padx=5)
-
-        self.file_path_entry = tk.Entry(top_frame, font=FONTS['mono'], bg='#333',
-                                        fg='white', insertbackground='white')
-        self.file_path_entry.pack(side='left', fill='x', expand=True, padx=5)
-        self.file_path_entry.insert(0, "/")
-
-        tk.Button(top_frame, text="GO", command=self.browse_path,
-                 bg=COLORS['fg_primary'], fg='black', font=FONTS['body'],
-                 relief='flat').pack(side='left', padx=5)
-
-        # 操作按钮栏
-        btn_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
-        btn_frame.pack(fill='x', padx=10)
-
-        buttons = [
-            ("⬇️ Download", self.download_file),
-            ("⬆️ Upload", self.upload_file),
-            ("🗑️ Delete", self.delete_file),
-            ("📝 View", self.view_file),
-        ]
-
-        for text, cmd in buttons:
-            tk.Button(btn_frame, text=text, command=cmd, bg=COLORS['btn_bg'],
-                     fg='white', font=FONTS['body'], relief='flat').pack(side='left', padx=5, pady=5)
-
-        # 文件列表
-        list_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
-        list_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        columns = ('Type', 'Name', 'Size', 'Modified')
-        self.file_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=20)
-
-        for col in columns:
-            self.file_tree.heading(col, text=col)
-            width = 80 if col == 'Type' else (400 if col == 'Name' else 150)
-            self.file_tree.column(col, width=width)
-
-        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.file_tree.yview)
-        self.file_tree.configure(yscrollcommand=scrollbar.set)
-
-        self.file_tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-
-        # 双击打开目录
-        self.file_tree.bind('<Double-1>', self.on_file_double_click)
-
-    # ==================== 标签页4: 屏幕监控 ====================
+    # ==================== 标签页2: 屏幕监控 ====================
 
     def _create_screen_tab(self):
         """创建屏幕监控标签"""
@@ -363,13 +252,17 @@ class VisualClientUI(tk.Tk):
         control_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
         control_frame.pack(fill='x', padx=10, pady=10)
 
-        tk.Button(control_frame, text="▶ START STREAM", command=self.start_screen_stream,
-                 bg=COLORS['fg_success'], fg='black', font=FONTS['body'],
-                 relief='flat').pack(side='left', padx=5)
+        self.btn_start_stream = tk.Button(control_frame, text="▶ START STREAM",
+                                          command=self.start_screen_stream,
+                                          bg=COLORS['fg_success'], fg='black', font=FONTS['body'],
+                                          relief='flat')
+        self.btn_start_stream.pack(side='left', padx=5)
 
-        tk.Button(control_frame, text="⏹ STOP STREAM", command=self.stop_screen_stream,
-                 bg=COLORS['fg_danger'], fg='white', font=FONTS['body'],
-                 relief='flat').pack(side='left', padx=5)
+        self.btn_stop_stream = tk.Button(control_frame, text="⏹ STOP STREAM",
+                                         command=self.stop_screen_stream,
+                                         bg=COLORS['fg_danger'], fg='white', font=FONTS['body'],
+                                         relief='flat', state='disabled')
+        self.btn_stop_stream.pack(side='left', padx=5)
 
         tk.Button(control_frame, text="📸 SCREENSHOT", command=self.take_screenshot,
                  bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
@@ -389,7 +282,7 @@ class VisualClientUI(tk.Tk):
                                     fg=COLORS['fg_white'], font=FONTS['h2'])
         self.screen_label.pack(fill='both', expand=True, padx=10, pady=10)
 
-    # ==================== 标签页5: Shell终端 ====================
+    # ==================== 标签页3: Shell终端 ====================
 
     def _create_shell_tab(self):
         """创建Shell终端"""
@@ -420,7 +313,7 @@ class VisualClientUI(tk.Tk):
                  bg=COLORS['fg_primary'], fg='black', font=FONTS['body'],
                  relief='flat').pack(side='right', padx=5)
 
-    # ==================== 标签页6: 操作历史 ====================
+    # ==================== 标签页4: 操作历史 ====================
 
     def _create_history_tab(self):
         """创建操作历史时间线"""
@@ -515,6 +408,7 @@ class VisualClientUI(tk.Tk):
     def disconnect(self):
         """断开连接"""
         self.monitor_running = False
+        self.streaming = False
         if self.sock:
             try:
                 send_message(self.sock, create_disconnect_message())
@@ -533,15 +427,21 @@ class VisualClientUI(tk.Tk):
     def _monitor_loop(self):
         """监控循环 - 定期获取系统信息"""
         while self.monitor_running:
+            # 如果正在进行屏幕流，暂停监控以避免冲突
+            if self.streaming:
+                time.sleep(1)
+                continue
+
             try:
-                # 获取系统信息
-                send_message(self.sock, create_system_info_message())
-                msg = receive_message(self.sock)
+                with self.sock_lock:
+                    # 获取系统信息
+                    send_message(self.sock, create_system_info_message())
+                    msg = receive_message(self.sock)
 
                 if msg and msg['type'] == MessageType.SYSTEM_INFO_RESPONSE:
                     info = msg['data']['info']
                     self.system_data = info
-                    self.after(0, lambda: self._update_dashboard(info))
+                    self.after(0, lambda i=info: self._update_dashboard(i))
 
                 time.sleep(3)  # 每3秒更新一次
             except Exception as e:
@@ -550,50 +450,53 @@ class VisualClientUI(tk.Tk):
 
     def _update_dashboard(self, info):
         """更新仪表盘数据"""
-        # 更新系统信息
-        if 'platform' in info:
-            self.sys_info_labels['OS'].config(text=info.get('platform', 'N/A'))
-        if 'hostname' in info:
-            self.sys_info_labels['Hostname'].config(text=info.get('hostname', 'N/A'))
-        if 'ip_address' in info:
-            self.sys_info_labels['IP'].config(text=info.get('ip_address', 'N/A'))
-        if 'cpu_count' in info:
-            self.sys_info_labels['CPU Cores'].config(text=str(info.get('cpu_count', 'N/A')))
+        try:
+            # 更新系统信息
+            if 'platform' in info:
+                self.sys_info_labels['OS'].config(text=info.get('platform', 'N/A'))
+            if 'hostname' in info:
+                self.sys_info_labels['Hostname'].config(text=info.get('hostname', 'N/A'))
+            if 'ip_address' in info:
+                self.sys_info_labels['IP'].config(text=info.get('ip_address', 'N/A'))
+            if 'cpu_count' in info:
+                self.sys_info_labels['CPU Cores'].config(text=str(info.get('cpu_count', 'N/A')))
 
-        # 更新CPU
-        cpu_percent = info.get('cpu_percent', 0)
-        self._update_progress(self.cpu_progress, cpu_percent)
-        self.lbl_cpu.config(text=f"{cpu_percent:.1f}%")
+            # 更新CPU
+            cpu_percent = info.get('cpu_percent', 0)
+            self._update_progress(self.cpu_progress, cpu_percent)
+            self.lbl_cpu.config(text=f"{cpu_percent:.1f}%")
 
-        # 更新内存
-        mem = info.get('memory', {})
-        mem_percent = mem.get('percent', 0)
-        mem_used = mem.get('used', 0) / (1024**3)  # 转换为GB
-        mem_total = mem.get('total', 0) / (1024**3)
-        self._update_progress(self.mem_progress, mem_percent)
-        self.lbl_mem.config(text=f"{mem_percent:.1f}% ({mem_used:.1f}/{mem_total:.1f} GB)")
+            # 更新内存
+            mem = info.get('memory', {})
+            mem_percent = mem.get('percent', 0)
+            mem_used = mem.get('used', 0) / (1024**3)  # 转换为GB
+            mem_total = mem.get('total', 0) / (1024**3)
+            self._update_progress(self.mem_progress, mem_percent)
+            self.lbl_mem.config(text=f"{mem_percent:.1f}% ({mem_used:.1f}/{mem_total:.1f} GB)")
 
-        # 更新磁盘
-        disk = info.get('disk', {})
-        disk_percent = disk.get('percent', 0)
-        disk_used = disk.get('used', 0) / (1024**3)
-        disk_total = disk.get('total', 0) / (1024**3)
-        self._update_progress(self.disk_progress, disk_percent)
-        self.lbl_disk.config(text=f"{disk_percent:.1f}% ({disk_used:.1f}/{disk_total:.1f} GB)")
+            # 更新磁盘
+            disk = info.get('disk', {})
+            disk_percent = disk.get('percent', 0)
+            disk_used = disk.get('used', 0) / (1024**3)
+            disk_total = disk.get('total', 0) / (1024**3)
+            self._update_progress(self.disk_progress, disk_percent)
+            self.lbl_disk.config(text=f"{disk_percent:.1f}% ({disk_used:.1f}/{disk_total:.1f} GB)")
 
-        # 更新其他信息
-        self.lbl_network.config(text=f"{info.get('network_connections', 0)} Active")
-        self.lbl_processes.config(text=f"{info.get('process_count', 0)} Processes")
+            # 更新其他信息
+            self.lbl_network.config(text=f"{info.get('network_connections', 0)} Active")
+            self.lbl_processes.config(text=f"{info.get('process_count', 0)} Processes")
 
-        # 运行时间
-        uptime = info.get('uptime', 0)
-        days = uptime // 86400
-        hours = (uptime % 86400) // 3600
-        minutes = (uptime % 3600) // 60
-        self.lbl_uptime.config(text=f"{days}d {hours}h {minutes}m")
+            # 运行时间
+            uptime = info.get('uptime', 0)
+            days = uptime // 86400
+            hours = (uptime % 86400) // 3600
+            minutes = (uptime % 3600) // 60
+            self.lbl_uptime.config(text=f"{days}d {hours}h {minutes}m")
 
-        # 日志
-        self.log_to_dashboard(f"System stats updated - CPU: {cpu_percent:.1f}% | MEM: {mem_percent:.1f}%")
+            # 日志
+            self.log_to_dashboard(f"System stats updated - CPU: {cpu_percent:.1f}% | MEM: {mem_percent:.1f}%")
+        except Exception as e:
+            print(f"Update dashboard error: {e}")
 
     def _update_progress(self, canvas, percent):
         """更新进度条"""
@@ -614,163 +517,29 @@ class VisualClientUI(tk.Tk):
 
     def log_to_dashboard(self, msg):
         """写入仪表盘日志"""
-        timestamp = datetime.now().strftime("[%H:%M:%S]")
-        self.log_dashboard.insert(tk.END, f"{timestamp} {msg}\n")
-        self.log_dashboard.see(tk.END)
-
-    # ==================== 进程管理功能 ====================
-
-    def refresh_processes(self):
-        """刷新进程列表"""
-        # 清空当前列表
-        for item in self.process_tree.get_children():
-            self.process_tree.delete(item)
-
-        # 模拟进程数据（实际应该从服务器获取）
-        # 这里需要扩展协议添加 PROCESS_LIST 消息类型
-        processes = [
-            ('1234', 'python.exe', '2.5', '15.3', 'Running'),
-            ('5678', 'chrome.exe', '18.2', '45.8', 'Running'),
-            ('9012', 'explorer.exe', '0.8', '8.2', 'Running'),
-            ('3456', 'notepad.exe', '0.1', '2.1', 'Running'),
-        ]
-
-        for proc in processes:
-            self.process_tree.insert('', 'end', values=proc)
-
-        self.add_history("Process", "Refreshed process list", "Success")
-
-    def kill_process(self):
-        """结束选中的进程"""
-        selection = self.process_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select a process")
-            return
-
-        item = self.process_tree.item(selection[0])
-        pid = item['values'][0]
-        name = item['values'][1]
-
-        if messagebox.askyesno("Confirm", f"Kill process {name} (PID: {pid})?"):
-            # 发送结束进程命令
-            self.add_history("Process", f"Killed process {name} (PID: {pid})", "Success")
-            messagebox.showinfo("Success", f"Process {name} killed")
-
-    def sort_processes(self, col):
-        """按列排序进程"""
-        pass
-
-    def filter_processes(self):
-        """过滤进程列表"""
-        pass
-
-    # ==================== 文件管理功能 ====================
-
-    def browse_path(self):
-        """浏览指定路径"""
-        path = self.file_path_entry.get()
-        # 清空文件列表
-        for item in self.file_tree.get_children():
-            self.file_tree.delete(item)
-
-        # 模拟文件数据
-        files = [
-            ('📁', '..', '', ''),
-            ('📁', 'Documents', '', '2024-01-15'),
-            ('📁', 'Pictures', '', '2024-02-20'),
-            ('📄', 'readme.txt', '2.5 KB', '2024-03-10'),
-            ('📄', 'data.json', '15.8 KB', '2024-03-11'),
-        ]
-
-        for file in files:
-            self.file_tree.insert('', 'end', values=file)
-
-        self.add_history("File", f"Browsed path: {path}", "Success")
-
-    def on_file_double_click(self, event):
-        """双击文件/文件夹"""
-        selection = self.file_tree.selection()
-        if selection:
-            item = self.file_tree.item(selection[0])
-            file_type = item['values'][0]
-            file_name = item['values'][1]
-
-            if file_type == '📁':
-                # 进入目录
-                current = self.file_path_entry.get()
-                if file_name == '..':
-                    new_path = '/'.join(current.rstrip('/').split('/')[:-1]) or '/'
-                else:
-                    new_path = f"{current.rstrip('/')}/{file_name}"
-                self.file_path_entry.delete(0, tk.END)
-                self.file_path_entry.insert(0, new_path)
-                self.browse_path()
-
-    def download_file(self):
-        """下载选中文件"""
-        selection = self.file_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select a file")
-            return
-
-        item = self.file_tree.item(selection[0])
-        filename = item['values'][1]
-
-        save_path = filedialog.asksaveasfilename(initialfile=filename)
-        if save_path:
-            self.add_history("File", f"Downloaded: {filename}", "Success")
-            messagebox.showinfo("Success", f"File downloaded to {save_path}")
-
-    def upload_file(self):
-        """上传文件"""
-        file_path = filedialog.askopenfilename()
-        if file_path:
-            self.add_history("File", f"Uploaded: {file_path}", "Success")
-            messagebox.showinfo("Success", "File uploaded")
-
-    def delete_file(self):
-        """删除文件"""
-        selection = self.file_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select a file")
-            return
-
-        item = self.file_tree.item(selection[0])
-        filename = item['values'][1]
-
-        if messagebox.askyesno("Confirm", f"Delete {filename}?"):
-            self.add_history("File", f"Deleted: {filename}", "Success")
-            messagebox.showinfo("Success", "File deleted")
-
-    def view_file(self):
-        """查看文件内容"""
-        selection = self.file_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select a file")
-            return
-
-        item = self.file_tree.item(selection[0])
-        filename = item['values'][1]
-
-        # 创建查看窗口
-        viewer = tk.Toplevel(self)
-        viewer.title(f"View: {filename}")
-        viewer.geometry("600x400")
-        viewer.configure(bg=COLORS['bg_dark'])
-
-        text = scrolledtext.ScrolledText(viewer, bg='black', fg='white', font=FONTS['mono'])
-        text.pack(fill='both', expand=True, padx=10, pady=10)
-        text.insert(tk.END, f"Content of {filename}\n" + "="*50 + "\n\n")
-        text.insert(tk.END, "File content would appear here...")
+        try:
+            timestamp = datetime.now().strftime("[%H:%M:%S]")
+            self.log_dashboard.insert(tk.END, f"{timestamp} {msg}\n")
+            self.log_dashboard.see(tk.END)
+        except:
+            pass
 
     # ==================== 屏幕监控功能 ====================
 
     def start_screen_stream(self):
         """开始屏幕流"""
+        if self.streaming:
+            return
+
         quality = self.quality_scale.get()
-        send_message(self.sock, create_screen_start_message(fps=10, quality=quality))
+
+        with self.sock_lock:
+            send_message(self.sock, create_screen_start_message(fps=10, quality=quality))
 
         self.streaming = True
+        self.btn_start_stream.config(state='disabled')
+        self.btn_stop_stream.config(state='normal')
+
         threading.Thread(target=self._screen_stream_loop, daemon=True).start()
         self.add_history("Screen", "Started screen streaming", "Success")
         self.log_to_dashboard("Screen streaming started")
@@ -778,41 +547,59 @@ class VisualClientUI(tk.Tk):
     def stop_screen_stream(self):
         """停止屏幕流"""
         self.streaming = False
-        send_message(self.sock, create_screen_stop_message())
+
+        with self.sock_lock:
+            send_message(self.sock, create_screen_stop_message())
+
         self.screen_label.config(image='', text="Stream stopped\nClick START STREAM to resume")
+        self.btn_start_stream.config(state='normal')
+        self.btn_stop_stream.config(state='disabled')
         self.add_history("Screen", "Stopped screen streaming", "Success")
         self.log_to_dashboard("Screen streaming stopped")
 
     def _screen_stream_loop(self):
         """屏幕流接收循环"""
-        _ = receive_message(self.sock)  # 忽略开始响应
+        try:
+            # 接收开始响应
+            with self.sock_lock:
+                _ = receive_message(self.sock)
 
-        while self.streaming:
-            try:
-                msg = receive_message(self.sock)
-                if not msg:
+            while self.streaming:
+                try:
+                    with self.sock_lock:
+                        msg = receive_message(self.sock)
+                        if not msg:
+                            break
+
+                        if msg['type'] == MessageType.SCREEN_FRAME:
+                            img_bytes = receive_binary_data(self.sock)
+                            if img_bytes:
+                                image = Image.open(io.BytesIO(img_bytes))
+                                # 缩放以适应标签页
+                                image.thumbnail((900, 500))
+                                photo = ImageTk.PhotoImage(image)
+
+                                if self.streaming:
+                                    self.after(0, lambda p=photo: self._update_screen_frame(p))
+                        elif msg['type'] == MessageType.SCREEN_STOP:
+                            break
+                except Exception as e:
+                    print(f"Stream frame error: {e}")
                     break
-
-                if msg['type'] == MessageType.SCREEN_FRAME:
-                    img_bytes = receive_binary_data(self.sock)
-                    if img_bytes:
-                        image = Image.open(io.BytesIO(img_bytes))
-                        # 缩放以适应标签页
-                        image.thumbnail((900, 500))
-                        photo = ImageTk.PhotoImage(image)
-
-                        if self.streaming:
-                            self.after(0, lambda p=photo: self._update_screen_frame(p))
-                elif msg['type'] == MessageType.SCREEN_STOP:
-                    break
-            except Exception as e:
-                print(f"Stream error: {e}")
-                break
+        except Exception as e:
+            print(f"Stream error: {e}")
+        finally:
+            self.streaming = False
+            self.after(0, lambda: self.btn_start_stream.config(state='normal'))
+            self.after(0, lambda: self.btn_stop_stream.config(state='disabled'))
 
     def _update_screen_frame(self, photo):
         """更新屏幕帧"""
-        self.screen_label.configure(image=photo, text='')
-        self.screen_label.image = photo
+        try:
+            self.screen_label.configure(image=photo, text='')
+            self.screen_label.image = photo
+        except:
+            pass
 
     def take_screenshot(self):
         """截取屏幕截图"""
@@ -830,7 +617,8 @@ class VisualClientUI(tk.Tk):
         self.shell_text.insert(tk.END, f"{cmd}\n")
 
         # 发送命令
-        send_message(self.sock, create_shell_message(cmd))
+        with self.sock_lock:
+            send_message(self.sock, create_shell_message(cmd))
 
         # 接收响应
         threading.Thread(target=self._wait_shell_response, daemon=True).start()
@@ -839,35 +627,47 @@ class VisualClientUI(tk.Tk):
 
     def _wait_shell_response(self):
         """等待Shell响应"""
-        resp = receive_message(self.sock)
-        if resp and resp['type'] == MessageType.SHELL_RESPONSE:
-            output = resp['data']['output']
-            self.after(0, lambda: self.shell_text.insert(tk.END, f"{output}\n> "))
+        try:
+            with self.sock_lock:
+                resp = receive_message(self.sock)
+            if resp and resp['type'] == MessageType.SHELL_RESPONSE:
+                output = resp['data']['output']
+                self.after(0, lambda: self.shell_text.insert(tk.END, f"{output}\n> "))
+        except Exception as e:
+            print(f"Shell response error: {e}")
 
     # ==================== 快捷操作功能 ====================
 
     def req_screenshot(self):
         """请求截图"""
         def _thread():
-            send_message(self.sock, create_screenshot_message())
-            header = receive_message(self.sock)
-            if header and header['type'] == MessageType.SCREENSHOT_DATA:
-                img_data = receive_binary_data(self.sock)
-                if img_data:
-                    self.after(0, lambda: self._show_image(img_data, "Screenshot"))
-                    self.add_history("Screenshot", "Captured screenshot", "Success")
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_screenshot_message())
+                    header = receive_message(self.sock)
+                    if header and header['type'] == MessageType.SCREENSHOT_DATA:
+                        img_data = receive_binary_data(self.sock)
+                        if img_data:
+                            self.after(0, lambda: self._show_image(img_data, "Screenshot"))
+                            self.add_history("Screenshot", "Captured screenshot", "Success")
+            except Exception as e:
+                print(f"Screenshot error: {e}")
         threading.Thread(target=_thread, daemon=True).start()
 
     def req_camera(self):
         """请求摄像头拍照"""
         def _thread():
-            send_message(self.sock, create_camera_message())
-            header = receive_message(self.sock)
-            if header and header['type'] == MessageType.CAMERA_DATA:
-                if header['data']['success']:
-                    img_data = receive_binary_data(self.sock)
-                    self.after(0, lambda: self._show_image(img_data, "Camera Photo"))
-                    self.add_history("Camera", "Captured camera photo", "Success")
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_camera_message())
+                    header = receive_message(self.sock)
+                    if header and header['type'] == MessageType.CAMERA_DATA:
+                        if header['data']['success']:
+                            img_data = receive_binary_data(self.sock)
+                            self.after(0, lambda: self._show_image(img_data, "Camera Photo"))
+                            self.add_history("Camera", "Captured camera photo", "Success")
+            except Exception as e:
+                print(f"Camera error: {e}")
         threading.Thread(target=_thread, daemon=True).start()
 
     def req_mic_record(self):
@@ -876,42 +676,51 @@ class VisualClientUI(tk.Tk):
                                           initialvalue=5, minvalue=1, maxvalue=60)
         if duration:
             def _thread():
-                send_message(self.sock, create_mic_record_message(duration=duration))
-                # 等待录音完成
-                header = receive_message(self.sock)
-                if header and header['type'] == MessageType.MIC_RECORD_RESPONSE:
-                    if header['data']['success']:
-                        audio_data = receive_binary_data(self.sock)
-                        save_path = filedialog.asksaveasfilename(defaultextension=".wav",
-                                                                 filetypes=[("WAV files", "*.wav")])
-                        if save_path:
-                            with open(save_path, 'wb') as f:
-                                f.write(audio_data)
-                            self.after(0, lambda: messagebox.showinfo("Success", f"Audio saved to {save_path}"))
-                            self.add_history("Microphone", f"Recorded {duration}s audio", "Success")
+                try:
+                    with self.sock_lock:
+                        send_message(self.sock, create_mic_record_message(duration=duration))
+                        header = receive_message(self.sock)
+                        if header and header['type'] == MessageType.MIC_RECORD_RESPONSE:
+                            if header['data']['success']:
+                                audio_data = receive_binary_data(self.sock)
+                                save_path = filedialog.asksaveasfilename(defaultextension=".wav",
+                                                                         filetypes=[("WAV files", "*.wav")])
+                                if save_path:
+                                    with open(save_path, 'wb') as f:
+                                        f.write(audio_data)
+                                    self.after(0, lambda: messagebox.showinfo("Success", f"Audio saved to {save_path}"))
+                                    self.add_history("Microphone", f"Recorded {duration}s audio", "Success")
+                except Exception as e:
+                    print(f"Mic record error: {e}")
             threading.Thread(target=_thread, daemon=True).start()
 
     def req_sys_info_full(self):
         """请求完整系统信息"""
         def _thread():
-            send_message(self.sock, create_system_info_message())
-            msg = receive_message(self.sock)
-            if msg and msg['type'] == MessageType.SYSTEM_INFO_RESPONSE:
-                info = msg['data']['info']
-                formatted = json.dumps(info, indent=2)
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_system_info_message())
+                    msg = receive_message(self.sock)
+                    if msg and msg['type'] == MessageType.SYSTEM_INFO_RESPONSE:
+                        info = msg['data']['info']
+                        formatted = json.dumps(info, indent=2)
 
-                # 显示在新窗口
-                viewer = tk.Toplevel(self)
-                viewer.title("System Information")
-                viewer.geometry("600x500")
-                viewer.configure(bg=COLORS['bg_dark'])
+                        # 显示在新窗口
+                        def show():
+                            viewer = tk.Toplevel(self)
+                            viewer.title("System Information")
+                            viewer.geometry("600x500")
+                            viewer.configure(bg=COLORS['bg_dark'])
 
-                text = scrolledtext.ScrolledText(viewer, bg='black', fg=COLORS['fg_secondary'],
-                                                font=FONTS['mono'])
-                text.pack(fill='both', expand=True, padx=10, pady=10)
-                text.insert(tk.END, formatted)
+                            text = scrolledtext.ScrolledText(viewer, bg='black', fg=COLORS['fg_secondary'],
+                                                            font=FONTS['mono'])
+                            text.pack(fill='both', expand=True, padx=10, pady=10)
+                            text.insert(tk.END, formatted)
 
-                self.add_history("System Info", "Retrieved full system info", "Success")
+                        self.after(0, show)
+                        self.add_history("System Info", "Retrieved full system info", "Success")
+            except Exception as e:
+                print(f"Sys info error: {e}")
         threading.Thread(target=_thread, daemon=True).start()
 
     def _show_image(self, img_data, title="Image"):
@@ -932,8 +741,11 @@ class VisualClientUI(tk.Tk):
 
     def add_history(self, action, details, status):
         """添加操作历史记录"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.history_tree.insert('', 0, values=(timestamp, action, details, status))
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.history_tree.insert('', 0, values=(timestamp, action, details, status))
+        except:
+            pass
 
     def clear_history(self):
         """清空历史记录"""
