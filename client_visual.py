@@ -69,6 +69,8 @@ class VisualClientUI(tk.Tk):
 
     def _init_dashboard_ui(self):
         """初始化可视化仪表盘"""
+        # 在销毁前保存IP地址
+        self.target_ip = self.entry_ip.get()
         self.login_frame.destroy()
 
         # 顶部状态栏
@@ -120,7 +122,7 @@ class VisualClientUI(tk.Tk):
         tk.Label(left_frame, text="● CONNECTED", font=FONTS['status'],
                 bg=COLORS['bg_lighter'], fg=COLORS['fg_success']).pack(anchor='w')
 
-        self.lbl_target = tk.Label(left_frame, text=f"Target: {self.entry_ip.get()}",
+        self.lbl_target = tk.Label(left_frame, text=f"Target: {self.target_ip}",
                                   font=FONTS['mono'], bg=COLORS['bg_lighter'], fg=COLORS['fg_secondary'])
         self.lbl_target.pack(anchor='w')
 
