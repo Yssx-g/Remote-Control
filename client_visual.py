@@ -15,7 +15,7 @@ from datetime import datetime
 from PIL import Image, ImageTk
 
 from protocol import *
-from config import SERVER_PORT, AUTH_PASSWORD_HASH
+from config import CLIENT_PORT, AUTH_PASSWORD_HASH
 from gui_theme import COLORS, FONTS, PADDING
 
 class VisualClientUI(tk.Tk):
@@ -1202,7 +1202,7 @@ class VisualClientUI(tk.Tk):
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(5)
-            self.sock.connect((ip, SERVER_PORT))
+            self.sock.connect((ip, CLIENT_PORT))
 
             # 身份验证
             import hashlib
@@ -1216,7 +1216,7 @@ class VisualClientUI(tk.Tk):
                 self.is_connected = True
                 self.sock.settimeout(None)
                 self._init_dashboard_ui()
-                self.add_history("Connection", f"Connected to {ip}:{SERVER_PORT}", "Success")
+                self.add_history("Connection", f"Connected to {ip}:{CLIENT_PORT}", "Success")
             else:
                 messagebox.showerror("Error", "Authentication Failed")
                 self.sock.close()

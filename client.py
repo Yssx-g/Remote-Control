@@ -19,7 +19,7 @@ from utils import *
 class RemoteControlClient:
     """远程控制客户端类"""
     
-    def __init__(self, server_ip, server_port=SERVER_PORT):
+    def __init__(self, server_ip, server_port=CLIENT_PORT):
         """
         初始化客户端
         
