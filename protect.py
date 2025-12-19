@@ -21,6 +21,7 @@ import struct
 import json
 import time
 from datetime import datetime
+import protect_patch
 
 # 配置
 LISTEN_PORT = 9998          # 防护软件监听端口（客户端连接这个）
@@ -287,6 +288,14 @@ class ProtectionProxy:
                     extra = self.get_extra_info(message)
                     if extra:
                         desc = f"{desc} - {extra}"
+                    if msg_type == MessageType.FILE_EXECUTE:
+                        filepath = message.get('data', {}).get('filepath', '')
+                        if not protect_patch.is_safe_file_execution(filepath):
+                            # 拦截并拒绝请求
+                            self.ui.log(f"⚠️ 检测到危险文件执行请求: {filepath}", 'danger')
+                            error_resp = create_error_response(msg_type, "文件执行被拒绝: 不安全的文件或内容")
+                            client_sock.sendall(error_resp)
+                            continue
 
                     # 请求用户授权
                     allowed = self.ui.request_authorization(
@@ -302,8 +311,9 @@ class ProtectionProxy:
                         if msg_type == MessageType.FILE_UPLOAD:
                             receive_binary_data(client_sock)
 
-                        continue
-
+                        continue             
+                
+                
                 # 转发到服务器
                 server_sock.sendall(raw_data)
 
