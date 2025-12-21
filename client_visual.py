@@ -440,6 +440,39 @@ class VisualClientUI(tk.Tk):
         self.screen_label.bind('<Button-3>', self.on_screen_right_click)
 
     # ==================== 标签页4: 摄像头视频流 ====================
+    def _clear_socket_buffer(self, timeout=0.1):
+        """
+        清理 socket 接收缓冲区中的残留数据
+        Args:
+            timeout: 超时时间(秒)
+        """
+        original_timeout = self.sock.gettimeout()
+        self.sock.settimeout(timeout)
+        total_cleared = 0
+        try:
+            while True:
+                leftover = self.sock.recv(4096)
+                if not leftover:
+                    break
+                total_cleared += len(leftover)
+        except:
+            pass
+        finally:
+            self.sock.settimeout(original_timeout)
+        return total_cleared
+
+    def clear_video_stream_residuals(self):
+        """清除视频流残存数据"""
+        try:
+            with self.sock_lock:
+                # 清理缓冲区中的所有残留数据
+                cleared = self._clear_socket_buffer(timeout=1.0)
+                if cleared > 0:
+                    print(f"成功清理了 {cleared} 字节的视频流残留数据")
+                else:
+                    print("缓冲区中没有发现残留数据")
+        except Exception as e:
+            print(f"清除视频流残存数据失败: {e}")
 
     def _create_camera_tab(self):
         """创建摄像头视频流标签页"""
@@ -462,6 +495,11 @@ class VisualClientUI(tk.Tk):
                                          relief='flat', state='disabled')
         self.btn_stop_camera.pack(side='left', padx=5)
 
+         # 添加清除视频流残存数据的按钮
+        tk.Button(control_frame, text="🧹 CLEAR RESIDUALS", command=self.clear_video_stream_residuals,
+                bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
+                relief='flat').pack(side='left', padx=5)
+        
         tk.Button(control_frame, text="📸 TAKE PHOTO", command=self.req_camera,
                  bg=COLORS['btn_bg'], fg='white', font=FONTS['body'],
                  relief='flat').pack(side='left', padx=5)

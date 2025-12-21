@@ -583,7 +583,7 @@ chmod 755 screenshots/ camera/ safe_files/
 ## 📁 项目结构
 
 ```
-Remote-Supervisor/
+Remote-Control/
 ├── server.py              # 服务端主程序 (控制台)
 ├── server_gui.py          # 服务端 GUI 程序 (可视化)
 ├── client.py              # 客户端主程序 (控制台)
@@ -659,31 +659,10 @@ Remote-Supervisor/
 - ❌ 破坏计算机系统
 - ❌ 任何违法犯罪活动
 
-## 🎓 学习资源
-
-### Python Socket 编程
-
-- [Python Socket 官方文档](https://docs.python.org/3/library/socket.html)
-- [网络编程基础](https://realpython.com/python-sockets/)
-
-### GUI 开发 (Tkinter)
-
-- [Tkinter 官方文档](https://docs.python.org/3/library/tkinter.html)
-- [Python GUI 编程](https://realpython.com/python-gui-tkinter/)
-
-### OpenCV 视频处理
-
-- [OpenCV Python 教程](https://docs.opencv.org/4.x/d6/d00/tutorial_py_root.html)
-
-### 网络安全
-
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [Python 安全编码](https://python.land/python-security)
-
 ---
 
-**开发者**: Anti1i
-**最后更新**: 2025 年 12 月 8 日
+**开发者**: Yssx
+**最后更新**: 2025 年 12 月 21 日
 **版本**: 1.3.0
 
 ⭐ 如果这个项目对你有帮助，请给个 Star！

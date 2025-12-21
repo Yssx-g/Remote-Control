@@ -9,7 +9,7 @@ import hashlib
 # ==================== 服务器配置 ====================
 SERVER_HOST = '0.0.0.0'  # 监听所有网络接口
 SERVER_PORT = 9999       # 服务器监听端口
-CLIENT_PORT = 9998
+CLIENT_PORT = 9999
 BUFFER_SIZE = 4096       # 数据接收缓冲区大小
 MAX_CONNECTIONS = 5      # 最大连接数
 
