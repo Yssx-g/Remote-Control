@@ -67,6 +67,13 @@ class VisualClientUI(tk.Tk):
                                  bg='#333', fg='white', insertbackground='white', width=25)
         self.entry_pwd.grid(row=1, column=1, padx=10, pady=10)
 
+        tk.Label(input_frame, text="Port:", bg=COLORS['bg_lighter'],
+             fg='white', font=FONTS['body']).grid(row=2, column=0, padx=10, pady=10, sticky='e')
+        self.entry_port = tk.Entry(input_frame, font=FONTS['mono'], bg='#333',
+                                fg='white', insertbackground='white', width=25)
+        self.entry_port.insert(0, "9999")  # 设置默认端口号
+        self.entry_port.grid(row=2, column=1, padx=10, pady=10)
+
         # 连接按钮
         btn_connect = tk.Button(self.login_frame, text="▶ ESTABLISH CONNECTION",
                                command=self.connect_to_server,
@@ -736,15 +743,32 @@ class VisualClientUI(tk.Tk):
 
         quality = self.quality_scale.get()
 
-        with self.sock_lock:
-            send_message(self.sock, create_screen_start_message(fps=10, quality=quality))
+        def _start():
+            try:
+                with self.sock_lock:
+                    # 使用 SCREEN_START 消息启动屏幕流
+                    msg = create_screen_start_message(fps=10, quality=quality)
+                    send_message(self.sock, msg)
+                    resp = receive_message(self.sock)
 
-        self.streaming = True
-        self.btn_start_stream.config(state='disabled')
-        self.btn_stop_stream.config(state='normal')
+                    if resp and resp['type'] == MessageType.SCREEN_START:
+                        if resp['data'].get('success'):
+                            self.streaming = True
+                            self.after(0, lambda: self.btn_start_stream.config(state='disabled'))
+                            self.after(0, lambda: self.btn_stop_stream.config(state='normal'))
+                            # 开始接收屏幕帧
+                            threading.Thread(target=self._screen_stream_loop, daemon=True).start()
+                            self.add_history("Screen", "Started screen streaming", "Success")
+                        else:
+                            error = resp['data'].get('error', 'Unknown error')
+                            self.after(0, lambda: messagebox.showerror("Error", f"Failed to start screen streaming: {error}"))
+                    else:
+                        self.after(0, lambda: messagebox.showerror("Error", "Screen streaming request denied by server"))
+            except Exception as e:
+                print(f"Start screen stream error: {e}")
+                self.after(0, lambda: messagebox.showerror("Error", f"Screen streaming error: {e}"))
 
-        threading.Thread(target=self._screen_stream_loop, daemon=True).start()
-        self.add_history("Screen", "Started screen streaming", "Success")
+        threading.Thread(target=_start, daemon=True).start()
 
     def stop_screen_stream(self):
         """停止屏幕流"""
@@ -753,15 +777,13 @@ class VisualClientUI(tk.Tk):
 
         self.streaming = False
 
-        # 在独立线程中发送停止消息并清理残留数据
-        def _send_stop():
+        def _stop():
             try:
-                time.sleep(0.2)  # 给流线程时间处理最后的帧并释放锁
+                time.sleep(0.2)  # 给流线程时间退出
                 with self.sock_lock:
                     send_message(self.sock, create_screen_stop_message())
 
-                    # 等待并接收服务器的 SCREEN_STOP 响应，清理残留数据
-                    # 设置超时以避免无限等待
+                    # 清理残留数据
                     self.sock.settimeout(2.0)
                     try:
                         while True:
@@ -769,26 +791,23 @@ class VisualClientUI(tk.Tk):
                             if not msg:
                                 break
                             if msg['type'] == MessageType.SCREEN_STOP:
-                                print("Received SCREEN_STOP confirmation from server")
+                                print("Received SCREEN_STOP confirmation")
                                 break
                             elif msg['type'] == MessageType.SCREEN_FRAME:
-                                # 丢弃残留的帧数据
                                 _ = receive_binary_data(self.sock)
                                 print("Discarded residual screen frame")
                             else:
-                                # 收到其他类型的消息，可能是正常的响应
                                 break
                     except Exception as e:
-                        print(f"Cleanup residual data: {e}")
+                        print(f"Cleanup screen residual: {e}")
                     finally:
-                        self.sock.settimeout(None)  # 恢复阻塞模式
-
+                        self.sock.settimeout(None)
             except Exception as e:
-                print(f"Send stop message error: {e}")
+                print(f"Stop screen stream error: {e}")
 
-        threading.Thread(target=_send_stop, daemon=True).start()
+        threading.Thread(target=_stop, daemon=True).start()
 
-        self.screen_label.config(image='', text="Stream stopped\nClick START STREAM to resume")
+        self.screen_label.config(image='', text="Screen stopped\nClick START STREAM to resume")
         self.btn_start_stream.config(state='normal')
         self.btn_stop_stream.config(state='disabled')
         self.add_history("Screen", "Stopped screen streaming", "Success")
@@ -796,10 +815,6 @@ class VisualClientUI(tk.Tk):
     def _screen_stream_loop(self):
         """屏幕流接收循环"""
         try:
-            # 接收开始响应
-            with self.sock_lock:
-                _ = receive_message(self.sock)
-
             while self.streaming:
                 try:
                     with self.sock_lock:
@@ -811,36 +826,24 @@ class VisualClientUI(tk.Tk):
                             img_bytes = receive_binary_data(self.sock)
                             if img_bytes:
                                 image = Image.open(io.BytesIO(img_bytes))
-                                # 保存原始屏幕尺寸（用于鼠标坐标映射）
-                                self.original_screen_size = image.size  # (width, height)
-
-                                # 缩放以适应标签页，保持纵横比
-                                original_w, original_h = image.size
-                                max_w, max_h = 900, 500
-
-                                # 计算缩放比例
-                                scale = min(max_w / original_w, max_h / original_h)
-                                new_w = int(original_w * scale)
-                                new_h = int(original_h * scale)
-
-                                image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                                self.displayed_image_size = (new_w, new_h)
-
+                                # 缩放以适应显示区域
+                                image.thumbnail((800, 450))
                                 photo = ImageTk.PhotoImage(image)
 
                                 if self.streaming:
                                     self.after(0, lambda p=photo: self._update_screen_frame(p))
                         elif msg['type'] == MessageType.SCREEN_STOP:
+                            print("Received SCREEN_STOP from server")
                             break
+                        else:
+                            print(f"Unexpected message type: {msg['type']}")
                 except Exception as e:
-                    print(f"Stream frame error: {e}")
+                    print(f"Screen frame error: {e}")
                     break
         except Exception as e:
-            print(f"Stream error: {e}")
+            print(f"Screen stream error: {e}")
         finally:
             self.streaming = False
-            self.original_screen_size = None
-            self.displayed_image_size = None
             self.after(0, lambda: self.btn_start_stream.config(state='normal'))
             self.after(0, lambda: self.btn_stop_stream.config(state='disabled'))
 
@@ -849,8 +852,8 @@ class VisualClientUI(tk.Tk):
         try:
             self.screen_label.configure(image=photo, text='')
             self.screen_label.image = photo
-        except:
-            pass
+        except Exception as e:
+            print(f"Update screen frame error: {e}")
 
     def take_screenshot(self):
         """截取屏幕截图"""
@@ -1236,11 +1239,21 @@ class VisualClientUI(tk.Tk):
         """连接到服务器"""
         ip = self.entry_ip.get()
         pwd = self.entry_pwd.get()
+        port = self.entry_port.get()
+        # 验证端口号是否为有效数字
+        if not port.isdigit():
+            messagebox.showerror("Error", "Invalid port number. Please enter a valid number.")
+            return
+
+        port = int(port)
+        if port < 1 or port > 65535:
+            messagebox.showerror("Error", "Port number must be between 1 and 65535.")
+            return
 
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(5)
-            self.sock.connect((ip, CLIENT_PORT))
+            self.sock.connect((ip, port))
 
             # 身份验证
             import hashlib
@@ -1254,7 +1267,7 @@ class VisualClientUI(tk.Tk):
                 self.is_connected = True
                 self.sock.settimeout(None)
                 self._init_dashboard_ui()
-                self.add_history("Connection", f"Connected to {ip}:{CLIENT_PORT}", "Success")
+                self.add_history("Connection", f"Connected to {ip}:{port}", "Success")
             else:
                 messagebox.showerror("Error", "Authentication Failed")
                 self.sock.close()
@@ -1273,7 +1286,8 @@ class VisualClientUI(tk.Tk):
                 self.sock.close()
             except:
                 pass
-        self.destroy()
+        
+        self._init_login_ui()
 
     # ==================== 快捷操作功能 ====================
 

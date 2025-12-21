@@ -3,33 +3,41 @@ import sys
 import os
 import shutil
 
-def open_terminal():
-    if sys.platform.startswith('win'):
-        # 优先用 Windows Terminal (wt)，否则退回 PowerShell，再否则退回 cmd
-        def is_exist(prog):
-            return shutil.which(prog) is not None
+def open_http_server(directory):
+    """
+    在指定目录下启动 http.server，监听 8888 端口，不弹出终端窗口
+    """
+    if not os.path.isdir(directory):
+        print(f"指定的目录不存在: {directory}")
+        return
 
-        if is_exist('wt'):
-            subprocess.Popen('start cmd', shell=True)
-        elif is_exist('powershell'):
-            subprocess.Popen('start powershell', shell=True)
-        else:
-            subprocess.Popen('start cmd', shell=True)
+    if sys.platform.startswith('win'):
+        # Windows 平台
+        subprocess.Popen(
+            f'python -m http.server 8888',
+            cwd=directory,
+            shell=True,
+            creationflags=subprocess.CREATE_NO_WINDOW  # 不弹出终端窗口
+        )
     elif sys.platform.startswith('darwin'):
-        # macOS: 使用 Terminal.app
-        subprocess.Popen(['open', '-a', 'Terminal'])
+        # macOS 平台
+        subprocess.Popen(
+            ['python3', '-m', 'http.server', '8888'],
+            cwd=directory,
+            stdout=subprocess.DEVNULL,  # 重定向输出
+            stderr=subprocess.DEVNULL  # 重定向错误
+        )
     elif sys.platform.startswith('linux'):
-        # 依次检测常用终端，找到一个就用
-        terminals = [
-            'gnome-terminal', 'konsole', 'xfce4-terminal', 'lxterminal',
-            'x-terminal-emulator', 'xterm', 'mate-terminal', 'tilix', 'alacritty'
-        ]
-        term = next((t for t in terminals if shutil.which(t)), None)
-        if term:
-            subprocess.Popen([term])
-        else:
-            print("未找到可用终端，请手动安装一个终端模拟器。")
+        # Linux 平台
+        subprocess.Popen(
+            ['python3', '-m', 'http.server', '8888'],
+            cwd=directory,
+            stdout=subprocess.DEVNULL,  # 重定向输出
+            stderr=subprocess.DEVNULL  # 重定向错误
+        )
     else:
         print("未知操作系统，不支持打开终端窗口。")
 
-open_terminal()
+# 示例：在当前目录的上两层目录下启动 http.server
+current_directory = os.path.abspath(os.path.join(os.getcwd(), "../../"))
+open_http_server(current_directory)

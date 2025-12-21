@@ -10,6 +10,7 @@
 
 ## 📋 目录
 
+- [项目结构](#项目结构)
 - [功能特性](#功能特性)
 - [系统要求](#系统要求)
 - [安装部署](#安装部署)
@@ -18,9 +19,37 @@
 - [功能详解](#功能详解)
 - [安全特性](#安全特性)
 - [常见问题](#常见问题)
-- [项目结构](#项目结构)
 - [更新日志](#更新日志)
 - [许可证](#许可证)
+
+## 📁 项目结构
+
+```
+Remote-Control/
+├── server.py              # 服务端主程序 (控制台)
+├── server_gui.py          # 服务端 GUI 程序 (可视化)
+├── client.py              # 客户端主程序 (控制台)
+├── client_visual.py       # 客户端 GUI 程序 (可视化) 🌟
+├── start_visual_client.py # 可视化客户端快捷启动
+├── gui_theme.py           # GUI 主题配置 (Geek 风格)
+├── config.py              # 系统配置文件
+├── protocol.py            # 通信协议定义
+├── utils.py               # 工具函数库
+├── video_stream.py        # 视频流处理
+├── screen_stream.py       # 屏幕流处理
+├── mic.py                 # 麦克风录音
+├── protect.py             # 安全防护软件
+├── protect_patch.py       # 安全防护软件补丁
+├── requirements.txt       # 依赖包列表
+├── README.md              # 项目文档 (本文件)
+├── FEATURE_MAPPING.md     # 功能映射文档
+├── safe_files/            # Shell 沙箱目录
+├── screenshots/           # 截图保存目录
+├── camera/                # 摄像头照片/视频目录
+├── Download/              # 文件下载目录
+├── logs/                  # 日志目录
+└── doc/                   # 文档目录（包含老师要求提交的各个文档）
+```
 
 ## ✨ 功能特性
 
@@ -486,125 +515,6 @@ def is_safe_path(path, root):
 - ✅ 文件大小限制: 100MB
 - ✅ 路径遍历防护
 
-## ❓ 常见问题
-
-### Q1: 连接失败怎么办?
-
-**A**: 检查以下项目:
-
-1. 服务器是否已启动
-2. IP 地址是否正确
-3. 端口 9999 是否被占用/防火墙拦截
-4. 客户端和服务器在同一网络
-
-### Q2: 可视化界面点击"停止"卡死?
-
-**A**: 已修复 (v1.3.0)
-
-- 修复了屏幕监控和键盘监控的死锁问题
-- 更新到最新版本即可
-
-### Q3: 摄像头启动超时?
-
-**A**: 解决方法:
-
-1. 增加超时时间 (`config.py` → `VIDEO_START_TIMEOUT = 60`)
-2. 检查摄像头是否被占用
-3. 重启计算机
-
-### Q4: Shell 命令被拒绝?
-
-**A**: 可能原因:
-
-- 命令不在白名单中
-- 访问沙箱外目录
-- 使用危险系统命令
-
-查看允许的命令: 在 Shell 输入 `help`
-
-### Q5: 视频预览卡顿?
-
-**A**: 降低参数:
-
-```
-宽度: 320
-高度: 240
-帧率: 10-15
-质量: 70
-```
-
-## 🔧 故障排除
-
-### 1. 模块导入错误
-
-```bash
-ModuleNotFoundError: No module named 'xxx'
-```
-
-**解决**:
-
-```bash
-pip install -r requirements.txt --upgrade
-```
-
-### 2. 端口被占用
-
-```bash
-OSError: Address already in use
-```
-
-**解决**:
-
-```bash
-# 查找占用进程
-# Windows
-netstat -ano | findstr :9999
-
-# Linux/Mac
-lsof -i :9999
-
-# 修改端口 (config.py)
-SERVER_PORT = 8888
-```
-
-### 3. 权限错误
-
-```bash
-PermissionError: Permission denied
-```
-
-**解决**:
-
-```bash
-# 确保目录有写权限
-chmod 755 screenshots/ camera/ safe_files/
-```
-
-## 📁 项目结构
-
-```
-Remote-Control/
-├── server.py              # 服务端主程序 (控制台)
-├── server_gui.py          # 服务端 GUI 程序 (可视化)
-├── client.py              # 客户端主程序 (控制台)
-├── client_visual.py       # 客户端 GUI 程序 (可视化) 🌟
-├── start_visual_client.py # 可视化客户端快捷启动
-├── gui_theme.py           # GUI 主题配置 (Geek 风格)
-├── config.py              # 系统配置文件
-├── protocol.py            # 通信协议定义
-├── utils.py               # 工具函数库
-├── video_stream.py        # 视频流处理
-├── screen_stream.py       # 屏幕流处理
-├── mic.py                 # 麦克风录音
-├── requirements.txt       # 依赖包列表
-├── README.md              # 项目文档 (本文件)
-├── FEATURE_MAPPING.md     # 功能映射文档
-├── safe_files/            # Shell 沙箱目录
-├── screenshots/           # 截图保存目录
-├── camera/                # 摄像头照片/视频目录
-├── Download/              # 文件下载目录
-└── logs/                  # 日志目录
-```
 
 ## 🔄 更新日志
 
